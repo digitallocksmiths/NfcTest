@@ -1,0 +1,18 @@
+// !TestName: Selection
+//
+//  Test Description here
+//  more...
+//
+//  End of comments marks the end of this description.
+//
+
+    @ResetA.cold;
+
+var Aid=F0010203040506;
+
+var Apdu = 00A40400 @Length(Aid) Aid;
+
+var resp = @Apdu(Apdu);
+
+
+

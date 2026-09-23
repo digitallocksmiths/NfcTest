@@ -1,0 +1,24 @@
+
+! Selection.Use
+! Parser:        0 Errors,       0 Warnings.
+!===============================================
+
+Reset Reader A, Cold
+ATR = { 3B80800101 }
+      : TS T0     : 3B 80
+      : Protocol 1: .. .. .. 80
+      :          2: .. .. .. 01
+      : Historical: 
+      : ChkSum    : 01
+
+# APDU_1 : 
+> 00A40400 07
+> F0010203040506
+< 9000 -- SW12_9000_SUCCESS
+
+
+!===============================================
+! APDU:          1 Processed.
+! Execution:     0 Errors,       0 Warnings.
+! Tests:         0 Pass,         0 Failures.
+!===============================================

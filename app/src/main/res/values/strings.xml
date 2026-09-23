@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">NfcTest</string>
+    <string name="hce_service_desc">NFC Test HCE Service</string>
+    <string name="hce_aid_desc">Test AID Group</string>
+</resources>
