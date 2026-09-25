@@ -23,7 +23,11 @@ import java.util.Objects;
 
 public class MainActivity extends AppCompatActivity {
 
+    private static final String TAG = "MyGui";
+
     public static String PACKAGE_NAME;
+
+    public byte[] baShell;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -50,11 +54,14 @@ public class MainActivity extends AppCompatActivity {
         tv.append("NFC HCE Service is active.\n");
         tv.append("AID: F0010203040506\n");
 
-        LoadDefaultImage();
+        vcard = VCard.Factory(GetImageDirectory());
+
+        tv.append("Running: " + vcard.szTitle + "\n");
+
     }
 
     public void CloseButton(View v) {
-        Log.d("BUTTONS", "User tapped the CloseButton");
+        Log.d(TAG, "BUTTONS: User tapped the CloseButton");
         finish();
     }
 
@@ -71,20 +78,17 @@ public class MainActivity extends AppCompatActivity {
     //
     private VCard vcard;
 
-    private String szCardImage     = "CardImage.json";
+
     private String szCardSnapshot  = "SnapshotImage.json";
     private String GetAppPrivateDirectory() { return this.getFilesDir().getPath(); }
-    private String GetAppPublicDirectory() {  return Objects.requireNonNull(getExternalFilesDir(null)).getPath(); }
+    private String GetAppPublicDirectory()  { return Objects.requireNonNull(getExternalFilesDir(null)).getPath(); }
+    private String GetImageDirectory()      { return Objects.requireNonNull(getExternalFilesDir(null)).getPath() + File.separator + "Image"; }
 
-    public String GetImagePath() {
-        //return GetAppPrivateDirectory() +  File.separator + szCardImage;
-        return GetAppPublicDirectory() +  File.separator + szCardImage;
-    }
 
     private void LoadImage(String szFullPathFilename) {
         try {
-            vcard = VCard.Factory(szFullPathFilename);
-            Print("Image: " + szFullPathFilename + "\n");
+            vcard = VCard.ReInitialize(szFullPathFilename);
+            Print("Image load: " + vcard.szFilename + "\n");
         }
         catch (VCard.VirtualCardException e) {
             Print("VirtualCardException: " + e.getMessage() + "\n");
@@ -98,7 +102,7 @@ public class MainActivity extends AppCompatActivity {
         if (vcard != null) {
             try {
                     vcard.SaveImage(szFullPathFilename);
-                    Print("Saved: (" + szFullPathFilename + ")\n");
+                    Print("Image save: " + vcard.szSavedAsFilename + "\n");
             }
             catch (Exception e) {
                 Print("Exception: " + e.getMessage() + "\n");
@@ -109,9 +113,6 @@ public class MainActivity extends AppCompatActivity {
     // =================================
     // Load default image
     // =================================
-    private void LoadDefaultImage() {  LoadImage(GetImagePath()); }
-    private void SaveDefaultImage() {  SaveImage(GetImagePath()); }
-
 
     public void LoadButton(View v) {
         //Print("Load\n");
@@ -131,13 +132,11 @@ public class MainActivity extends AppCompatActivity {
             public void onSelectedFilePaths(String[] files) {
                 //files is the array of the paths of files selected by the Application User.
                 if (files != null && files.length > 0) {
-                    Log.d("FileName is ", files[0]);
-                    Print("Selected: " + files[0] + "\n");
+                    Log.d(TAG, "Selected fileName is " + files[0]);
+                    //Print("Selected: " + files[0] + "\n");
                     LoadImage(files[0]);
                 }
             }
-
-
 
         });
         dialog.show();
@@ -148,42 +147,6 @@ public class MainActivity extends AppCompatActivity {
         String szFilename = GetAppPublicDirectory() +  File.separator + szCardSnapshot;
         SaveImage(szFilename);
     }
-
-    // ======================================================================================
-    // File picker
-
-    //public void FilePick() {
-    //    DialogProperties properties = new DialogProperties();
-    //    properties.selection_type = DialogConfigs.FILE_AND_DIR_SELECT; //.FILE_SELECT;
-    //    properties.selection_mode = DialogConfigs.SINGLE_MODE;
-    //    properties.root = new File(GetAppPublicDirectory());
-    //    properties.error_dir = new File(GetAppPublicDirectory());
-    //    properties.offset = new File(GetAppPublicDirectory());
-    //    properties.extensions = null;
-    //
-    //    FilePickerDialog dialog = new FilePickerDialog(MainActivity.this, properties);
-    //    dialog.setTitle("Select a File");
-    //    //dialog.setDialogSelectionListener(files -> {
-    //    //    if (files != null && files.length > 0) {
-    //    //        Log.d("FileName is ", files[0]);
-    //    //        Print("Selected: " + files[0] + "\n");
-    //    //    }
-    //    //});
-    //    dialog.setDialogSelectionListener(new DialogSelectionListener() {
-    //        @Override
-    //        public void onSelectedFilePaths(String[] files) {
-    //            //files is the array of the paths of files selected by the Application User.
-    //            if (files != null && files.length > 0) {
-    //                Log.d("FileName is ", files[0]);
-    //                Print("Selected: " + files[0] + "\n");
-    //            }
-    //        }
-    //    });
-    //
-    //    dialog.show();
-    //}
-
-
 
 
 }

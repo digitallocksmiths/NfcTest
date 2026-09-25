@@ -15,4 +15,7 @@ var Apdu = 00A40400 @Length(Aid) Aid;
 var resp = @Apdu(Apdu);
 
 
+@Apdu(0011223344);
+@Apdu(Apdu);
+
 

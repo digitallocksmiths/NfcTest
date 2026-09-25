@@ -3,4 +3,9 @@
     <dimen name="checkbox_margin">8dp</dimen>
     <dimen name="toolbar_image_margin">16dp</dimen>
     <dimen name="checkbox_dimens">24dp</dimen>
+    <dimen name="file_picker_title_size">14sp</dimen>
+    <dimen name="file_picker_subtitle_size">11sp</dimen>
+    <dimen name="file_picker_button_size">13sp</dimen>
+    <dimen name="file_picker_item_min_height">42dp</dimen>
+    <dimen name="file_picker_item_padding_vertical">2dp</dimen>
 </resources>

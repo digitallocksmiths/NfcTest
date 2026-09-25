@@ -9,10 +9,28 @@ public class MyHostApduService extends HostApduService {
 
     // Response for "SELECT AID"
     private static final byte[] SELECT_OK_SW = {(byte) 0x90, (byte) 0x00};
-    private static final byte[] UNKNOWN_CMD_SW = {(byte) 0x00, (byte) 0x00};
+    private static final byte[] UNKNOWN_CMD_SW = {(byte) 0x6E, (byte) 0x00};
+
 
     @Override
-    public byte[] processCommandApdu(byte[] commandApdu, Bundle extras) {
+    public void onCreate() {                                                                        // create service
+        super.onCreate();
+        Log.d(TAG, "Service created");
+    }
+
+    @Override
+    public void onDestroy() {                                                                       // destroy service
+        super.onDestroy();
+        Log.d(TAG, "Service destroyed");
+    }
+
+    @Override
+    public void onDeactivated(int reason) {                                                         // deselect or deactivate
+        Log.d(TAG, "Service deactivated: " + reason);
+    }
+
+    @Override
+    public byte[] processCommandApdu(byte[] commandApdu, Bundle extras) {                           // process command
         if (commandApdu == null) {
             return UNKNOWN_CMD_SW;
         }
@@ -32,10 +50,8 @@ public class MyHostApduService extends HostApduService {
         return SELECT_OK_SW;
     }
 
-    @Override
-    public void onDeactivated(int reason) {
-        Log.d(TAG, "Deactivated: " + reason);
-    }
+
+
 
     private String bytesToHex(byte[] bytes) {
         StringBuilder sb = new StringBuilder();
