@@ -1,5 +1,7 @@
 package com.digitallocksmiths.ItsoHce.VcardCmd2;
 
+import android.util.Log;
+
 import com.digitallocksmiths.ItsoHce.VCard;
 import com.digitallocksmiths.ItsoHce.VcardCmd0.Cmd0;
 
@@ -8,6 +10,7 @@ import org.json.JSONObject;
 
 
 public class Cmd2 extends VCard {
+    private static final String TAG = "Cmd2";
 
     private JSONObject szCardImage = null;
 
@@ -36,8 +39,28 @@ public class Cmd2 extends VCard {
     //      clear/init working variables.
     //      return the FCI
     // ========================================
-    public byte[] Reset() {                                                                         // Card reset
-        return new byte[] { 2,2,2,2,2,2,2,2};
+    public void Reset() {                                                                           // Card reset
+        Log.d(TAG, "Card reset");
+        return;
     }
+
+    // ========================================
+    // Select()
+    //      construct and return the FCI
+    // ========================================
+    public byte[] Select() {                                                                        // Card select
+        Log.d(TAG, "Application Select");
+        return Response( new byte[] { 2 }, SW.NO_ERROR);
+    }
+
+    // ========================================
+    // Dispatch()
+    //      process the APDU
+    // ========================================
+    public byte[] Dispatch(byte[] baApdu) {                                                         // Card dispatch
+        Log.d(TAG, "Application Dispatch");
+        return Response(SW.INS_NOT_SUPPORTED);
+    }
+
 
 }

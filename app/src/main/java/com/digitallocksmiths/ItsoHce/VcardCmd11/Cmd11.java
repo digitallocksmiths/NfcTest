@@ -1,6 +1,7 @@
 package com.digitallocksmiths.ItsoHce.VcardCmd11;
 
 import android.util.Base64;
+import android.util.Log;
 
 import com.digitallocksmiths.ItsoHce.NvmFile;
 import com.digitallocksmiths.ItsoHce.VCard;
@@ -18,6 +19,7 @@ import javax.crypto.Cipher;
 
 
 public class Cmd11 extends VCard {
+    private static final String TAG = "Cmd11";
 
     private JSONObject szCardImage = null;
 
@@ -108,12 +110,14 @@ public class Cmd11 extends VCard {
         return szCardImage;
     }
 
-    // ========================================
+     // ========================================
     // Reset()
     //      clear/init working variables.
     //      return the FCI
     // ========================================
-    public byte[] Reset() {                                                                         // Card reset
+    public void Reset() {                                                                           // Card reset
+        Log.d(TAG, "Card reset");
+
         Arrays.fill(baChallenge,     (byte)0);
         Arrays.fill(baChallengeTemp, (byte)0);
         fAuthenticated       = false;
@@ -125,8 +129,24 @@ public class Cmd11 extends VCard {
         //hLatests             = null;
         //hOldest              = null;
 
-        return new byte[] { 11,11,11,11,11,11,11,11};
     }
 
+    // ========================================
+    // Select()
+    //      construct and return the FCI
+    // ========================================
+    public byte[] Select() {                                                                        // Card select
+        Log.d(TAG, "Application Select");
+        return Response( new byte[] { 11 }, SW.NO_ERROR);
+    }
+
+    // ========================================
+    // Dispatch()
+    //      process the APDU
+    // ========================================
+    public byte[] Dispatch(byte[] baApdu) {                                                         // Card dispatch
+        Log.d(TAG, "Application Dispatch");
+        return Response(SW.INS_NOT_SUPPORTED);
+    }
 
 }
