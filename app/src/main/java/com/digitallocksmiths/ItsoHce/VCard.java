@@ -1,6 +1,5 @@
 package com.digitallocksmiths.ItsoHce;
 
-
 import android.util.Log;
 
 import java.io.File;
