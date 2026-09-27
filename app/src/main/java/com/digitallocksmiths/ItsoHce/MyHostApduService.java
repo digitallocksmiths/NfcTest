@@ -1,18 +1,18 @@
 package com.digitallocksmiths.ItsoHce;
 
+import static java.lang.System.arraycopy;
+
 import android.nfc.cardemulation.HostApduService;
 import android.os.Bundle;
 import android.util.Log;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.Objects;
 
 public class MyHostApduService extends HostApduService {
     private static final String TAG = "MyHostApduService";
 
-    // Response for "SELECT AID"
-    private static final byte[] SELECT_OK_SW   = {(byte) 0x90, (byte) 0x00};
-    private static final byte[] UNKNOWN_CMD_SW = {(byte) 0x6E, (byte) 0x00};
 
     private VCard vcard;                                                                            // Card image loaded on create.
 
@@ -30,7 +30,8 @@ public class MyHostApduService extends HostApduService {
     public void onCreate() {                                                                        // create service
         super.onCreate();
         Log.d(TAG, "Service created");
-        vcard = VCard.Factory(GetImageDirectory());
+        VCard.Initialize(GetImageDirectory());                                                      // set up the classes NVM
+        vcard = VCard.FactoryLoadImage();                                                           // load the CM image.
     }
 
     @Override
@@ -48,7 +49,7 @@ public class MyHostApduService extends HostApduService {
     @Override
     public byte[] processCommandApdu(byte[] commandApdu, Bundle extras) {                           // process command
         if (commandApdu == null) {
-            return UNKNOWN_CMD_SW;
+            return VCard.Response(VCard.SW.CLA_NOT_SUPPORTED);
         }
 
         String hexCommand = bytesToHex(commandApdu);
@@ -62,7 +63,32 @@ public class MyHostApduService extends HostApduService {
             commandApdu[2] == (byte) 0x04 &&
             commandApdu[3] == (byte) 0x00)    {
                 Log.d(TAG, "SELECT AID detected");
-                return vcard.Select();
+                byte[] baAid    = Arrays.copyOfRange(commandApdu, 5, 5 + commandApdu[4]);           // 84 : AID
+                byte[] baA5Body = vcard.Select();                                                   // A5 : Propitiatory
+
+                boolean fA5_Long = (baA5Body.length > 127);
+                boolean f6F_Long = ((2 + baAid.length + ((fA5_Long)?3:2) + baA5Body.length) > 127);
+
+                byte[] baFci     = new byte[((f6F_Long) ? 3:2) +
+                                            (2 + baAid.length) +
+                                            ((fA5_Long)?3:2)   +
+                                             baA5Body.length];
+
+                int iOffset=0;
+                baFci[iOffset++] = 0x6F;                                                            // 6F : FCI tag
+                if (f6F_Long) { baFci[iOffset++] = (byte)0x81; }                                    //    len opt
+                baFci[iOffset++] = (byte)(baFci.length-iOffset);                                    //    len
+                baFci[iOffset++] = (byte)0x84;                                                      //        84 : tag
+                baFci[iOffset++] = (byte)baAid.length;                                              //           len
+                arraycopy(baAid, 0, baFci, iOffset, baAid.length);                                  //           body
+                iOffset += baAid.length;                                                            //
+                baFci[iOffset++] = (byte)0xa5;                                                      //        A5 : tag
+                if (fA5_Long) { baFci[iOffset++] = (byte) 0x81; }                                   //           len opt
+                baFci[iOffset++] = (byte)baA5Body.length;                                           //           len
+                arraycopy(baA5Body, 0, baFci, iOffset, baA5Body.length);                            //           body
+                iOffset += baA5Body.length;                                                         //
+
+                return VCard.Response(baFci, VCard.SW.NO_ERROR);                                    // return it with the happy message.
         }
 
         return vcard.Dispatch(commandApdu);

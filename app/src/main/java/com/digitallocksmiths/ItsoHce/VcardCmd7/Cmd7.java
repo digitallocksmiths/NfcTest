@@ -3,37 +3,62 @@ package com.digitallocksmiths.ItsoHce.VcardCmd7;
 import android.util.Log;
 
 import com.digitallocksmiths.ItsoHce.VCard;
-import com.digitallocksmiths.ItsoHce.VcardCmd0.Cmd0;
 
 import org.json.JSONObject;
 
-import java.util.Arrays;
 
 
 public class Cmd7 extends VCard {
     private static final String TAG = "Cmd7";
 
-    private JSONObject szCardImage = null;
+    private JSONObject szJsonCardImage = null;
 
     // Constructor
     public Cmd7() {
         super();
     }
 
-    public static  VCard Factory() {                                                                // bootstrap load existing image
-        return new Cmd7();
+    // ========================================
+    // FactoryLoadImage()
+    //      Make a new VCard from NVM store.
+    // ========================================
+    public static  VCard FactoryLoadImage() {                                                       // bootstrap load existing image from NVM store
+        Log.d(TAG, "FactoryLoadImage");
+        // ToDo: Read the files into the image here.
+        Cmd7 cmd = new Cmd7();
+        cmd.szTitle = "Uninitialized CMD7 Card Image";
+        return cmd;
     }
 
-
-    public static VCard Factory(JSONObject szCardImage) {
+    // ========================================
+    // FactoryImportImage(JSONObject szJsonCardImage)
+    //      Make a new VCard from the JSON image.
+    // ========================================
+    public static  VCard FactoryImportImage(JSONObject szJsonCardImage) {                           // new image from Json template
+        Log.d(TAG, "FactoryImportImage");
+        // ToDo: Read the Json image here.
         Cmd7 v = new Cmd7();
-        v.szCardImage = szCardImage;
+        v.szJsonCardImage = szJsonCardImage;
         return v;
     }
 
+    // ========================================
+    // SaveImage()
+    //      Save the CM image to the NVM store.
+    // ========================================
+    public void        SaveImage() {                                                                // Save the CM image to the NVM store.
+        Log.d(TAG, "SaveImage");
+        // ToDo: Save the image to files here.
+    }
 
-    public JSONObject CreateImage() {
-        return szCardImage;
+    // ========================================
+    // ExportImage()
+    //      Make a JSON image of the CM.
+    // ========================================
+    public JSONObject ExportImage() {                                                               // CM image to Json.
+        Log.d(TAG, "ExportImage");
+        // ToDo: Make the Json file contents here.
+        return szJsonCardImage;
     }
 
     // ========================================
@@ -42,8 +67,8 @@ public class Cmd7 extends VCard {
     //      return the FCI
     // ========================================
     public void Reset() {                                                                           // Card reset
-        Log.d(TAG, "Card reset");
-        return;
+        Log.d(TAG, "Reset");
+        // ToDo: Clear CM Ram vars here.
     }
 
     // ========================================
@@ -51,8 +76,9 @@ public class Cmd7 extends VCard {
     //      construct and return the FCI
     // ========================================
     public byte[] Select() {                                                                        // Card select
-        Log.d(TAG, "Application Select");
-        return Response( new byte[] { 7 }, SW.NO_ERROR);
+        Log.d(TAG, "Select");                                                                       // Build FCI.A5's contents
+        // ToDo: Build the FCI A5 contents here.
+        return new byte[] { (byte)0x80, 1, 7};
     }
 
     // ========================================
@@ -60,7 +86,8 @@ public class Cmd7 extends VCard {
     //      process the APDU
     // ========================================
     public byte[] Dispatch(byte[] baApdu) {                                                         // Card dispatch
-        Log.d(TAG, "Application Dispatch");
+        Log.d(TAG, "Dispatch");
+        // ToDo: Process APDUs here.
         return Response(SW.INS_NOT_SUPPORTED);
     }
 

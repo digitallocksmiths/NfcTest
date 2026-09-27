@@ -3,25 +3,18 @@ package com.digitallocksmiths.ItsoHce.VcardCmd11;
 import android.util.Base64;
 import android.util.Log;
 
-import com.digitallocksmiths.ItsoHce.NvmFile;
 import com.digitallocksmiths.ItsoHce.VCard;
-import com.digitallocksmiths.ItsoHce.VcardCmd0.Cmd0;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.security.MessageDigest;
-import java.security.Signature;
 import java.util.Arrays;
-import java.util.zip.Checksum;
-
-import javax.crypto.Cipher;
 
 
 public class Cmd11 extends VCard {
     private static final String TAG = "Cmd11";
 
-    private JSONObject szCardImage = null;
+    private JSONObject szJsonCardImage = null;
 
     private byte[] baAid;
     private byte[] baAuthKasParams;
@@ -71,28 +64,38 @@ public class Cmd11 extends VCard {
         super();
     }
 
-    public static  VCard Factory() {                                                                // bootstrap load existing image
-        return new Cmd11();
+    // ========================================
+    // FactoryLoadImage()
+    //      Make a new VCard from NVM store.
+    // ========================================
+    public static  VCard FactoryLoadImage() {                                                       // bootstrap load existing image from NVM store
+        Log.d(TAG, "FactoryLoadImage");
+        Cmd11 cmd = new Cmd11();
+        cmd.szTitle = "Uninitialized CMD11 Card Image";
+        // ToDo: Read the files into the image here.
+        return cmd;
     }
 
 
-    public static VCard Factory(JSONObject szCardImage) throws JSONException {
+    // ========================================
+    // FactoryImportImage(JSONObject szJsonCardImage)
+    //      Make a new VCard from the JSON image.
+    // ========================================
+    public static VCard FactoryImportImage(JSONObject szJsonCardImage) throws JSONException {
         Cmd11 v = new Cmd11();
-        v.szCardImage = szCardImage;
+        v.szJsonCardImage = szJsonCardImage;
         try {
-            v.baAid           = Base64.decode(szCardImage.getString("baAid"),           Base64.DEFAULT);
-            v.baAuthKasParams = Base64.decode(szCardImage.getString("baAuthKasParams"), Base64.DEFAULT);
-            v.baUID           = Base64.decode(szCardImage.getString("baUID"),           Base64.DEFAULT);
-            v.baShell         = Base64.decode(szCardImage.getString("baShell"),         Base64.DEFAULT);
-            v.mAuthDesKeyA    = Base64.decode(szCardImage.getString("mAuthDesKeyA"),    Base64.DEFAULT);
-            v.mAuthDesKeyB    = Base64.decode(szCardImage.getString("mAuthDesKeyB"),    Base64.DEFAULT);
-            v.baPseudoUID     = Base64.decode(szCardImage.getString("baPseudoUID"),     Base64.DEFAULT);
-            v.baPseudoShell   = Base64.decode(szCardImage.getString("baPseudoShell"),   Base64.DEFAULT);
-            v.mAuthPseudoKeyA = Base64.decode(szCardImage.getString("mAuthPseudoKeyA"), Base64.DEFAULT);
-            v.mAuthPseudoKeyB = Base64.decode(szCardImage.getString("mAuthPseudoKeyB"), Base64.DEFAULT);
-
-
-
+            v.baAid           = Base64.decode(szJsonCardImage.getString("baAid"),           Base64.DEFAULT);
+            v.baAuthKasParams = Base64.decode(szJsonCardImage.getString("baAuthKasParams"), Base64.DEFAULT);
+            v.baUID           = Base64.decode(szJsonCardImage.getString("baUID"),           Base64.DEFAULT);
+            v.baShell         = Base64.decode(szJsonCardImage.getString("baShell"),         Base64.DEFAULT);
+            v.mAuthDesKeyA    = Base64.decode(szJsonCardImage.getString("mAuthDesKeyA"),    Base64.DEFAULT);
+            v.mAuthDesKeyB    = Base64.decode(szJsonCardImage.getString("mAuthDesKeyB"),    Base64.DEFAULT);
+            v.baPseudoUID     = Base64.decode(szJsonCardImage.getString("baPseudoUID"),     Base64.DEFAULT);
+            v.baPseudoShell   = Base64.decode(szJsonCardImage.getString("baPseudoShell"),   Base64.DEFAULT);
+            v.mAuthPseudoKeyA = Base64.decode(szJsonCardImage.getString("mAuthPseudoKeyA"), Base64.DEFAULT);
+            v.mAuthPseudoKeyB = Base64.decode(szJsonCardImage.getString("mAuthPseudoKeyB"), Base64.DEFAULT);
+            // ToDo: Read the Json image here.
 
         }
         catch (JSONException e) {
@@ -106,17 +109,33 @@ public class Cmd11 extends VCard {
     }
 
 
-    public JSONObject CreateImage() {
-        return szCardImage;
+    // ========================================
+    // SaveImage()
+    //      Save the CM image to the NVM store.
+    // ========================================
+    public void        SaveImage() {                                                                // Save the CM image to the NVM store.
+        Log.d(TAG, "SaveImage");
+        // ToDo: Save the image to files here.
     }
 
-     // ========================================
+    // ========================================
+    // ExportImage()
+    //      Make a JSON image of the CM.
+    // ========================================
+    public JSONObject ExportImage() {                                                               // CM image to Json.
+        Log.d(TAG, "ExportImage");
+        // ToDo: Make the Json file contents here.
+        return szJsonCardImage;
+    }
+
+    // ========================================
     // Reset()
     //      clear/init working variables.
     //      return the FCI
     // ========================================
     public void Reset() {                                                                           // Card reset
-        Log.d(TAG, "Card reset");
+        Log.d(TAG, "Reset");
+        // ToDo: Clear CM Ram vars here.
 
         Arrays.fill(baChallenge,     (byte)0);
         Arrays.fill(baChallengeTemp, (byte)0);
@@ -136,8 +155,9 @@ public class Cmd11 extends VCard {
     //      construct and return the FCI
     // ========================================
     public byte[] Select() {                                                                        // Card select
-        Log.d(TAG, "Application Select");
-        return Response( new byte[] { 11 }, SW.NO_ERROR);
+        Log.d(TAG, "Select");                                                                       // Build FCI.A5's contents
+        // ToDo: Build the FCI A5 contents here
+        return new byte[] { (byte)0x80, 1, 11};
     }
 
     // ========================================
@@ -145,7 +165,8 @@ public class Cmd11 extends VCard {
     //      process the APDU
     // ========================================
     public byte[] Dispatch(byte[] baApdu) {                                                         // Card dispatch
-        Log.d(TAG, "Application Dispatch");
+        Log.d(TAG, "Dispatch");
+        // ToDo: Process APDUs here.
         return Response(SW.INS_NOT_SUPPORTED);
     }
 

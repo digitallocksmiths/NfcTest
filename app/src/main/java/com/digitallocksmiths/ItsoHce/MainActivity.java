@@ -7,7 +7,6 @@ import android.view.View;
 import android.widget.TextView;
 
 import androidx.activity.EdgeToEdge;
-import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
@@ -54,7 +53,8 @@ public class MainActivity extends AppCompatActivity {
         tv.append("NFC HCE Service is active.\n");
         tv.append("AID: F0010203040506\n");
 
-        vcard = VCard.Factory(GetImageDirectory());
+        VCard.Initialize(GetImageDirectory());                                                      // set up the classes NVM
+        vcard = VCard.FactoryLoadImage();                                                                    // Load the active CM image
 
         tv.append("Running: " + vcard.szTitle + "\n");
 
@@ -85,10 +85,11 @@ public class MainActivity extends AppCompatActivity {
     private String GetImageDirectory()      { return Objects.requireNonNull(getExternalFilesDir(null)).getPath() + File.separator + "Image"; }
 
 
-    private void LoadImage(String szFullPathFilename) {
+    private void ImportImage(String szJsonFilename) {
         try {
-            vcard = VCard.ReInitialize(szFullPathFilename);
+            vcard = VCard.ImportImage(szJsonFilename);
             Print("Image load: " + vcard.szFilename + "\n");
+            Print("Running: " + vcard.szTitle + "\n");
         }
         catch (VCard.VirtualCardException e) {
             Print("VirtualCardException: " + e.getMessage() + "\n");
@@ -98,10 +99,10 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void SaveImage(String szFullPathFilename) {
+    private void ExportImage(String szJsonFilename) {
         if (vcard != null) {
             try {
-                    vcard.SaveImage(szFullPathFilename);
+                    vcard.ExportImage(szJsonFilename);
                     Print("Image save: " + vcard.szSavedAsFilename + "\n");
             }
             catch (Exception e) {
@@ -111,7 +112,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // =================================
-    // Load default image
+    // Load Button
+    //      triggers ImportImage(jsonFilename)
     // =================================
 
     public void LoadButton(View v) {
@@ -134,7 +136,7 @@ public class MainActivity extends AppCompatActivity {
                 if (files != null && files.length > 0) {
                     Log.d(TAG, "Selected fileName is " + files[0]);
                     //Print("Selected: " + files[0] + "\n");
-                    LoadImage(files[0]);
+                    ImportImage(files[0]);
                 }
             }
 
@@ -145,7 +147,7 @@ public class MainActivity extends AppCompatActivity {
     public void SaveButton(View v) {
         Print("Save\n");
         String szFilename = GetAppPublicDirectory() +  File.separator + szCardSnapshot;
-        SaveImage(szFilename);
+        ExportImage(szFilename);
     }
 
 

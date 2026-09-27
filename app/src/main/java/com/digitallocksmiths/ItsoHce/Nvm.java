@@ -3,7 +3,6 @@ package com.digitallocksmiths.ItsoHce;
 import android.util.Base64;
 
 import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
@@ -21,12 +20,12 @@ import java.io.IOException;
 //
 
 
-public class NvmFile {
+public class Nvm {
 
     String szImageDir;
     // private Key Key;
 
-    public NvmFile(String szImageDir /* key here */) {                                              // Constructor
+    public Nvm(String szImageDir /* key here */) {                                              // Constructor
         this.szImageDir = szImageDir.endsWith(File.separator) ? szImageDir : szImageDir + File.separator;
 
         File dir = new File(szImageDir);
@@ -69,5 +68,13 @@ public class NvmFile {
             return null;
         }
     }
+
+    public void WipeDirectory() {
+        File dir = new File(szImageDir);
+        for (File file : dir.listFiles()) {
+            file.delete();
+        }
+    }
+
 
 }

@@ -2,7 +2,7 @@ package com.digitallocksmiths.ItsoHce.VcardCmd11;
 
 // Media memory management table
 
-import com.digitallocksmiths.ItsoHce.NvmFile;
+import com.digitallocksmiths.ItsoHce.Nvm;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -129,7 +129,7 @@ public class Mmmt {
     // ==========================================================================================
     // Save and Load.
 
-    public void Save(NvmFile nvm, String szFilename) {
+    public void Save(Nvm nvm, String szFilename) {
         try {
             nvm.Write(szFilename, toByteArray());
         } catch (Exception e) {
@@ -137,7 +137,7 @@ public class Mmmt {
         }
     }
 
-    public void Load(NvmFile nvm, String szFilename) {
+    public void Load(Nvm nvm, String szFilename) {
         try {
             byte[] data = nvm.Read(szFilename);
             fromByteArray(data);

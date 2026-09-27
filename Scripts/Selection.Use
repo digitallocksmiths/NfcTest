@@ -16,6 +16,6 @@ var resp = @Apdu(Apdu);
 
 
 @Apdu(0011223344);
-@Apdu(Apdu);
+@Apdu(Apdu 00);
 
 
