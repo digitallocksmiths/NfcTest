@@ -3,34 +3,13 @@
 ! Parser:        0 Errors,       0 Warnings.
 !===============================================
 
-Reset Reader A, Cold
-ATR = { 3B80800101 }
-      : TS T0     : 3B 80
-      : Protocol 1: .. .. .. 80
-      :          2: .. .. .. 01
-      : Historical: 
-      : ChkSum    : 01
-
-# APDU_1 : 
-> 00A40400 07
-> F0010203040506
-< 6F0E8407F0010203040506A503800100
-< 9000 -- SW12_9000_SUCCESS
-
-# APDU_2 : 
-> 00112233 44
-< 6D00 -- SW12_6D00_BAD_INS
-
-# APDU_3 : 
-> 00A40400 07
-> F0010203040506
-> 00
-< 6F0E8407F0010203040506A503800100
-< 9000 -- SW12_9000_SUCCESS
-
+Selection.Use:    9.4     - Execution Error     : Reset Reader A, No active card reader
+Selection.Use:   15.11    - Execution Error     : Apdu Reader A, No active card reader
+Selection.Use:   18.0     - Execution Error     : Apdu Reader A, No active card reader
+Selection.Use:   19.0     - Execution Error     : Apdu Reader A, No active card reader
 
 !===============================================
-! APDU:          3 Processed.
-! Execution:     0 Errors,       0 Warnings.
+! APDU:          0 Processed.
+! Execution:     4 Errors,       0 Warnings.
 ! Tests:         0 Pass,         0 Failures.
 !===============================================

@@ -12,6 +12,7 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import com.digitallocksmiths.ItsoHce.VcardCmd0.Cmd0;
 import com.github.angads25.filepicker.controller.DialogSelectionListener;
 import com.github.angads25.filepicker.model.DialogConfigs;
 import com.github.angads25.filepicker.model.DialogProperties;
@@ -53,10 +54,15 @@ public class MainActivity extends AppCompatActivity {
         tv.append("NFC HCE Service is active.\n");
         tv.append("AID: F0010203040506\n");
 
-        VCard.Initialize(GetImageDirectory());                                                      // set up the classes NVM
-        vcard = VCard.FactoryLoadImage();                                                                    // Load the active CM image
+        try {
+            VCard.Initialize(GetImageDirectory());                                                      // set up the classes NVM
+            vcard = VCard.FactoryImageLoad();                                                           // Load the active CM image
+        } catch (VCard.VirtualCardException e) {
+            Log.d(TAG, "onCreate: Trouble loading image: " + e.getMessage());
+            throw new RuntimeException(e);
+        }
 
-        tv.append("Running: " + vcard.szTitle + "\n");
+        tv.append("Running: " + vcard.TitleGet() + "\n");
 
     }
 
@@ -87,9 +93,10 @@ public class MainActivity extends AppCompatActivity {
 
     private void ImportImage(String szJsonFilename) {
         try {
-            vcard = VCard.ImportImage(szJsonFilename);
+            vcard = VCard.ImageImportJson(szJsonFilename);
             Print("Image load: " + vcard.szFilename + "\n");
-            Print("Running: " + vcard.szTitle + "\n");
+            Print("Running: " + vcard.TitleGet() + "\n");
+            return;
         }
         catch (VCard.VirtualCardException e) {
             Print("VirtualCardException: " + e.getMessage() + "\n");
@@ -97,12 +104,19 @@ public class MainActivity extends AppCompatActivity {
         catch (Exception e) {
             Print("Exception: " + e.getMessage() + "\n");
         }
+        Print("Image load failed. Substituting CMD0\n");
+        try {
+            vcard = new Cmd0();
+        }
+        catch (VCard.VirtualCardException e) {
+            // this will not happen but it keeps the compiler happy!
+        }
     }
 
     private void ExportImage(String szJsonFilename) {
         if (vcard != null) {
             try {
-                    vcard.ExportImage(szJsonFilename);
+                    vcard.ImageExportJson(szJsonFilename);
                     Print("Image save: " + vcard.szSavedAsFilename + "\n");
             }
             catch (Exception e) {

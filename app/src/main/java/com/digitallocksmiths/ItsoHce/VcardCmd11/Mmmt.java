@@ -16,18 +16,38 @@ public class Mmmt {
     public static final short sSHELL_maxE 		= 16;				// Limit for Geometry E
     public static final short sFREE_PAGE_COUNT  = 8; 				// Number of vacant pages for IPE updates.
 
-    public byte[]       baCSS       = new byte[8];                  // Commit Confirmation Signature
-    public int          iTsn;                                       // Transaction Sequence Number;
-    public byte         bDir;                                       // Current Directory
-    public byte         bLog;                                       // Current Log file
-    public byte[]       baEListIpe  = new byte[sSHELL_maxE-1];      // sectors used by Directory E entries IPE. // E[1..Shell.E-1]
-    public byte[]       baEListVrg  = new byte[sSHELL_maxE-1];      // sectors used by Directory E entries VRG.
-    public byte[]       baFreePages = new byte[sFREE_PAGE_COUNT];   // sectors unused
-    public byte[]       baCrc       = new byte[4];                  // checksum of the above.
+
+    private Nvm     nvm;
+    private String  szOwnFilename;                                  // read from this
+    private String  szTwinFilename;                                 // write to this
+
+    // ================================================================
+    // remembered in file
+    private byte[]       baCSS       = new byte[8];                  // Commit Confirmation Signature
+    private int          iTsn;                                       // Transaction Sequence Number;
+    private byte         bDir;                                       // Current Directory
+    private byte         bLog;                                       // Current Log file
+    private byte[]       baEListIpe  = new byte[sSHELL_maxE-1];      // sectors used by Directory E entries IPE. // E[1..Shell.E-1]
+    private byte[]       baEListVrg  = new byte[sSHELL_maxE-1];      // sectors used by Directory E entries VRG.
+    private byte[]       baFreePages = new byte[sFREE_PAGE_COUNT];   // sectors unused
+    private byte[]       baCrc       = new byte[4];                  // checksum of the above.
 
 
-    public Mmmt() {
+    public Mmmt(Nvm nvm, String szOwnFilename, String szTwinFilename) {
+       this.nvm = nvm;                                                                              // file store
+       this.szOwnFilename  = szOwnFilename;                                                         // read from this
+       this.szTwinFilename = szTwinFilename;                                                        // write to this
+    }
 
+    public void Erase() {
+        Arrays.fill(baCSS,       (byte)0);
+        iTsn = 0;
+        bDir = 0;
+        bLog = 0;
+        Arrays.fill(baEListIpe,  (byte)0);
+        Arrays.fill(baEListVrg,  (byte)0);
+        Arrays.fill(baFreePages, (byte)0);
+        Arrays.fill(baCrc, (byte)0);
     }
 
     private  void arrayCopy(byte[] baSrc, int iSrcOff, byte[] baDst, int iDstOff, int iLen) {       // Local Array copy utility
@@ -38,8 +58,8 @@ public class Mmmt {
     public void getCCS(byte[] baV, short sOff) { arrayCopy(baCSS, 0, baV, sOff, baCSS.length); }
 
     public int  getTsn()                              { return iTsn;                }               // iTsn accessors
-    public void setTsn(int i)                         { iTsn = i;                   }
-    public void incTsn()                              { this.iTsn++;                }
+    //public void setTsn(int i)                         { iTsn = i;                   }
+    //public void incTsn()                              { this.iTsn++;                }
 
     public void setDirPage(byte bPage)                { bDir = bPage;	            }   		    // Dir accessors
     public byte getDirPage()                          { return bDir;                }
@@ -47,14 +67,14 @@ public class Mmmt {
     public void setLogPage(byte bPage)                { bLog = bPage;	            } 				// Log accessors
     public byte getLogPage()                          { return bLog;                }
 
-    public void setIpePage(short sIndex, byte bPage)  {	baEListIpe[sIndex] = bPage;	}				// Ipe  accessors
-    public byte getIpePage(short sIndex)              { return baEListIpe[sIndex];  }
+    public void setIpePage(int iIndex, byte bPage)    {	baEListIpe[iIndex] = bPage;	}				// Ipe  accessors
+    public byte getIpePage(int iIndex)                { return baEListIpe[iIndex];  }
 
-    public void setVrgPage(short sIndex, byte bPage)  {	baEListVrg[sIndex] = bPage;	}				// VrgA accessors
-    public byte getVrgPage(short sIndex)              { return baEListVrg[sIndex];  }
+    public void setVrgPage(int iIndex, byte bPage)    {	baEListVrg[iIndex] = bPage;	}				// VrgA accessors
+    public byte getVrgPage(int iIndex)                { return baEListVrg[iIndex];  }
 
-    public void setFreePage(short sIndex, byte bPage) {	baFreePages[sIndex] = bPage; }				// Free Page accessors
-    public byte getFreePage(short sIndex)             { return baFreePages[sIndex];  }
+    public void setFreePage(int iIndex, byte bPage)   {	baFreePages[iIndex] = bPage; }				// Free Page accessors
+    public byte getFreePage(int iIndex)               { return baFreePages[iIndex];  }
 
 
     // ==========================================================================================   // CRC management
@@ -86,7 +106,7 @@ public class Mmmt {
         for (i = 0; i < baFreePages.length; i++) { UpdateCrc(baSum, baFreePages[i]); }
     }
 
-    public void setCrc() {                                      // Set the structure's CRC
+    private  void setCrc() {                                      // Set the structure's CRC
         CalculateStructureCrc(baCrc);
     }
 
@@ -129,17 +149,19 @@ public class Mmmt {
     // ==========================================================================================
     // Save and Load.
 
-    public void Save(Nvm nvm, String szFilename) {
+    public void Save() {
         try {
-            nvm.Write(szFilename, toByteArray());
+            this.iTsn++;                                                                            // we've aged by 1
+            setCrc();                                                                               // update the CRC
+            nvm.Write(szTwinFilename, toByteArray());                                               // Write over our twin.
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    public void Load(Nvm nvm, String szFilename) {
+    public void Load() {
         try {
-            byte[] data = nvm.Read(szFilename);
+            byte[] data = nvm.Read(szOwnFilename);
             fromByteArray(data);
         } catch (Exception e) {
             e.printStackTrace();

@@ -1,11 +1,15 @@
 package com.digitallocksmiths.ItsoHce;
 
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
 import android.util.Base64;
 import android.util.Log;
 
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.security.KeyStore;
 import java.util.Scanner;
 
 import org.json.JSONException;
@@ -14,11 +18,19 @@ import org.json.JSONObject;
 import com.digitallocksmiths.ItsoHce.Itso.Shell;
 import com.digitallocksmiths.ItsoHce.VcardCmd0.Cmd0;
 import com.digitallocksmiths.ItsoHce.VcardCmd2.Cmd2;
-import com.digitallocksmiths.ItsoHce.VcardCmd7.Cmd7;
 import com.digitallocksmiths.ItsoHce.VcardCmd11.Cmd11;
 import com.digitallocksmiths.ItsoHce.VcardCmd12.Cmd12;
 
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+
 public abstract class VCard {
+    private static final String TAG = "VCard";
+
+
+    // =============================================================================================
+    // Helper classes and static functions
+    //
 
     public static class VirtualCardException extends Exception {                                    // our type of exception
         public VirtualCardException(String szMsg) {
@@ -54,6 +66,10 @@ public abstract class VCard {
         public static final short COMMAND_CHAINING_NOT_SUPPORTED = (short)0x6884;                   // Command chaining not supported
     }
 
+    public static class Shadow {
+        public static final short A                       = 1;
+        public static final short B                       = 2;
+    }
 
     public static byte[] Response(short sSW) {                                                      // Helper for empty response construction
         byte[] baResponse = new byte[2];
@@ -70,51 +86,304 @@ public abstract class VCard {
         return baResponse;
     }
 
-
-
-    public String szTitle           = null;
-    public String szName            = null;
-    public String szFilename        = null;
-    public String szSavedAsFilename = null;
-
-    protected static Nvm Nvm;
-    protected static byte[]     baShell;
-    public    static Shell      shell;
-
-    public static void Initialize(String szImageDirectory) {                                        // setup the NVM store used by CM images.
-        Nvm      = new Nvm(szImageDirectory);
+    private static byte[] ChecksumCalculate(byte[] baBlob) {
+        byte[] baChecksum = new byte[4];
+        baChecksum[0] = (byte)0xff;
+        baChecksum[1] = (byte)0x00;
+        baChecksum[2] = (byte)0xff;
+        baChecksum[3] = (byte)0x00;
+        for (int i = 0; i < baBlob.length -4 ; i++) {
+            baChecksum[0] += baBlob[i];
+            baChecksum[1] += baChecksum[0];
+            baChecksum[2] += baChecksum[1];
+            baChecksum[3] += baChecksum[2];
+        }
+        return baChecksum;
     }
 
+    private static boolean ChecksumVerify(byte[] baBlob) {
+        byte[] baChecksum = ChecksumCalculate(baBlob);
+        for (int i = 0; i < 4; i++) {
+            if (baChecksum[i] != baBlob[baBlob.length - 4 + i]) {
+                return false;
+            }
+        }
+        return true;
+    }
 
-    public static VCard FactoryLoadImage() {                                                        // power up card
-        baShell  = Nvm.Read("Shell");                                                               // looking for the image Shell
+    protected static byte[] DecodeJsonByteArray(JSONObject szJsonCardImage, String szKey) {
         try {
-            if (baShell != null) {
-                shell = new Shell(baShell);
-                switch (shell.getFvc()) {
-                    case 0x00:  return Cmd0.FactoryLoadImage();
-                    case 0x02:  return Cmd2.FactoryLoadImage();
-                    case 0x07:  return Cmd7.FactoryLoadImage();
-                    case 0x0B:  return Cmd11.FactoryLoadImage();
-                    case 0x0C:  return Cmd12.FactoryLoadImage();
-                    //default:    return Cmd0.FactoryLoadImage();
-                }
+            String S = szJsonCardImage.getString(szKey);
+            if (S.equals("null")) {                                                                 // "null" is good base64 for [-98, -23, 101 ] !!!
+                return new byte[0];
             }
-            else {
-                VCard vcard = Cmd0.FactoryLoadImage();
-                Nvm.Write("Shell", baShell);
-                return vcard;
+            return Base64.decode(S, Base64.DEFAULT);
+        }
+        catch (JSONException e) {
+            return null;
+        }
+    }
+
+    public void TitleSet(String szTitle) {
+        byte[] ba = szTitle.getBytes();
+        baTitle = java.util.Arrays.copyOf(ba, baTitle.length);
+    }
+
+    public String TitleGet() {
+        //String sz = new String(baTitle, StandardCharsets.UTF_8);
+        return new String(baTitle);
+    }
+
+
+    // =============================================================================================
+    // Main Class behaviour
+    //
+
+    // Image Filenames/identifiers
+    static final String szKeyStore  = "AndroidKeyStore";
+    static final String szFileNameA = "VCardImageA";
+    static final String szFileNameB = "VCardImageB";
+
+
+    // Image save/restore variables                                     // Static because we only have one file/one AID
+    protected static  Nvm         nvm;                                  // The memory storage for the image.
+    private   static  KeyStore    keyStore;                             // The key storage for the image.
+    private   static  SecretKey   KeyB;                                 // The key used to encrypt the imageB.
+    private   static  SecretKey   KeyA;                                 // The key used to encrypt the imageA.
+    private   static  int         iAgeA = 0;                            // The age of Image A
+    private   static  int         iAgeB = 0;                            // The age of Image B
+
+    // Image variables used in this superclass.
+    private static  int         iAge = 0;                               // age of this file ( monotonic counter or updates.)
+    public  static  byte[]      baShell = new byte[24];                 // will/must be 0x18 bytes (i.e. no MCRN)
+    public  static  byte[]      baTitle = new byte[32];                 // space for the title of the card.
+    private static  int         iNvmSizeSuper = 60;                     // size of the above savable data.
+
+
+    //public String szName            = null;
+    public              String      szFilename        = null;
+    public              String      szSavedAsFilename = null;
+    public  static      Shell       shell;
+
+    // ===============================================
+    // Initialize:
+    //      One-off setup called by the owning application.
+    //      Called on application load.
+    // ===============================================
+    public static void Initialize(String szImageDirectory) throws VirtualCardException {                                       // set up the key store and image storage.
+        nvm      = new Nvm(szImageDirectory);
+        try {
+            keyStore = KeyStore.getInstance(szKeyStore);
+            keyStore.load(null);
+            KeyA = (SecretKey) keyStore.getKey(szFileNameA, null);                                  // using file name as the key alias here
+            KeyB = (SecretKey) keyStore.getKey(szFileNameB, null);                                  // same again.
+            if ((KeyA == null) || (KeyB == null)) {
+                KeyGenerator keyGen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, szKeyStore);
+                keyGen.init(new KeyGenParameterSpec.Builder(szFileNameA, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT).build());
+                keyGen.generateKey();
+                KeyA = (SecretKey) keyStore.getKey(szFileNameA, null);
+                keyGen.init(new KeyGenParameterSpec.Builder(szFileNameB, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT).build());
+                keyGen.generateKey();
+                KeyB = (SecretKey) keyStore.getKey(szFileNameB, null);
             }
         }
-        catch(Exception e){ ;
-            Log.d("VCard",  e.getMessage());
+        catch (  java.security.cert.CertificateException |
+                 java.io.IOException |
+                 java.security.KeyStoreException |
+                 java.security.NoSuchAlgorithmException |
+                 java.security.UnrecoverableKeyException |
+                 java.security.InvalidAlgorithmParameterException |
+                 java.security.NoSuchProviderException |
+                 java.security.InvalidParameterException e ) {
+            Log.d(TAG, "Key load went tits up");
+            throw new VCard.VirtualCardException("VCard: Key load went tits up");
         }
-        return null;
+
+    }
+
+    // ===============================================
+    // FileReadEncryptedBuffer:
+    //      Read an image file with the appropriate key.
+    //      decrypt it and convert it to a ByteBuffer.
+    // ===============================================
+    private static ByteBuffer FileReadEncryptedBuffer(short AorB)  {
+
+        byte[]      baBuffer;
+        SecretKey   key;
+
+        switch (AorB) {
+            case Shadow.A:  baBuffer = nvm.Read(szFileNameA);                                              // Read the encrypted file
+                             key      = KeyA;
+                             break;
+            case Shadow.B:  baBuffer = nvm.Read(szFileNameB);
+                             key      = KeyB;
+                             break;
+            default:        throw new IllegalStateException("FileReadEncryptedBuffer: Unexpected value: " + AorB);
+        }
+
+        if (baBuffer == null) {
+            Log.d(TAG, "FileReadEncryptedBuffer: File not found");
+            return null;
+        }
+        if (key == null) {
+            Log.d(TAG, "FileReadEncryptedBuffer: Key not found");
+            return null;
+        }
+
+        // ToDo: Decrypt here
+        //try {
+        //    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        //    cipher.init(Cipher.DECRYPT_MODE, Key);
+        //    baA = cipher.doFinal(ba);                                                             // decrypted file
+        //}
+        //catch (java.security.NoSuchAlgorithmException |
+        //       javax.crypto.NoSuchPaddingException |
+        //       java.security.InvalidKeyException |
+        //       javax.crypto.BadPaddingException |
+        //       javax.crypto.IllegalBlockSizeException ex) {
+        //    Log.d(TAG, "Decrypt A cocked up");
+        //    baA = new byte[0];
+        //}
+
+        if (ChecksumVerify(baBuffer)) {
+            return ByteBuffer.wrap(baBuffer);
+        }
+        else {
+            Log.d(TAG, "FileReadEncryptedBuffer: Checksum failed");
+            return null;
+        }
+    }
+
+    // ===============================================
+    // FileWriteEncryptedBuffer:
+    //      append the checksum and encrypt the buffer.
+    //      Then save it to the appropriate file.
+    //
+    //      not the key change to endure the same key
+    //      is not used for the predictably variable file.
+    // ===============================================
+    private static void FileWriteEncryptedBuffer(short AorB, ByteBuffer buffer)  throws VCard.VirtualCardException, Exception {
+        String      szFilename;
+        SecretKey   key;
+
+        // ToDo: New Key
+        key = null;
+        switch (AorB) {
+            case Shadow.A: szFilename = szFileNameA;                                              // Read the encrypted file
+                            KeyA       = key;
+                            break;
+            case Shadow.B: szFilename = szFileNameB;
+                            key      = KeyB;
+                            break;
+            default:        throw new IllegalStateException("FileWriteEncryptedBuffer: Unexpected value: " + AorB);
+        }
+
+        byte[] baBlob = buffer.array();                                                             // construction is complete
+        buffer.put(ChecksumCalculate(baBlob));                                                      // Add the checksum
+
+        // ToDo: Encrypt here
+        //try {
+        //    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");                              // encrypted buffer
+        //    cipher.init(Cipher.ENCRYPT_MODE, key);
+        //    baBlob = cipher.doFinal(baBlob);
+        nvm.Write(szFilename, baBlob);                                                              // Write the encrypted file
+    }
+
+    protected final byte SerializeOverhead = (byte)5;
+    protected final byte ByteSentinel      = (byte)0xA5;
+
+    protected void SerializeByteArray(ByteBuffer b, byte[] baBlob) {
+        b.put(ByteSentinel);
+        b.putInt(baBlob.length);
+        b.put(baBlob);
+    }
+
+    protected byte[] DeserializeByteArray(ByteBuffer b) {
+        if (b.get() != ByteSentinel) {
+            return null;
+        }
+        int len = b.getInt();
+        byte[] baBlob = new byte[len];
+        b.get(baBlob);
+        return baBlob;
     }
 
 
 
-    public static VCard ImportImage(String szJsonFilename) throws VirtualCardException {                  // erase old image and create new one from Json description.
+
+    // ===============================================
+    // base class constructor:
+    //      Nothing to do here!
+    //
+    // ===============================================
+    public VCard() throws VCard.VirtualCardException {                                              // constructor invoked via subclass.
+        ;
+    }
+
+
+    // ===============================================
+    // FactoryLoadImage:
+    //      read the encrypted image file then create
+    //      and return the appropriate sub-class.
+    //
+    // ===============================================
+    public static VCard FactoryImageLoad() throws VirtualCardException {                             // power up card
+
+        ByteBuffer bufferA = FileReadEncryptedBuffer(Shadow.A);
+        ByteBuffer bufferB = FileReadEncryptedBuffer(Shadow.B);
+        ByteBuffer buffer  = null;
+
+        iAgeA = iAgeB = 0;
+        if ((bufferA != null) && (bufferA.remaining() >= 4)) { iAgeA = bufferA.getInt();  }         // read the images Age (first 4 bytes)
+        if ((bufferB != null) && (bufferB.remaining() >= 4)) { iAgeB = bufferB.getInt();  }
+
+        if (iAgeA > iAgeB)              { iAge = iAgeA; buffer = bufferA; }
+        else                            { iAge = iAgeB; buffer = bufferB; }
+
+        VCard vc;
+        if (((iAgeA != 0) || (iAgeB != 0)) && (buffer != null)) {
+            try {
+                buffer.get(baShell);                                                                // Read the image's Shell;
+                shell = new Shell(baShell);                                                         // Parse the Shell
+                switch (shell.getFvc()) {
+                    case 0x02:  vc = new Cmd2(); break;
+                    case 0x0B:  vc = new Cmd11(); break;
+                    case 0x0C:  vc = new Cmd12(); break;
+                    default:    vc = new Cmd0(); break;
+                }
+                buffer.get(baTitle);                                                                //                  Title;
+                vc.ImageDeserialize(buffer);
+                return vc;
+            }
+            catch (Exception e) {
+                Log.d(TAG, "FactoryImageLoad: parser failed");                                      // in development, we use 'get' exceptions to recognize faulty images
+            }
+        }
+        return new Cmd0();
+    }
+
+    // ===============================================
+    // ImageSave:
+    //      serialize the current image,
+    //      encrypt it and save it.
+    //
+    // ===============================================
+    public void ImageSave() throws VirtualCardException,  VirtualCardException, Exception {
+        ByteBuffer buffer = ByteBuffer.allocate(iNvmSizeSuper + ImageGetSize() + 4);                // accumulator for the saved image  super+sub+crc
+        buffer.putInt(++iAge);                                                                      // Add super's elements first.  iAge +
+        buffer.put(baShell);                                                                        //                              baShell.
+        buffer.put(baTitle);                                                                        //                              baTitle.
+        ImageSerialize(buffer);                                                                     // next let the subclass serialize its image
+        if (iAgeA > iAgeB) { iAgeB = iAge; FileWriteEncryptedBuffer(Shadow.B, buffer); }           // helper for encrypting and saving the image
+        else               { iAgeA = iAge; FileWriteEncryptedBuffer(Shadow.A, buffer); }
+    }
+
+    // ===============================================
+    // ImageImportJson:
+    //      Erase the current image and read a new JSON file VCard description.
+    //
+    // ===============================================
+    public static VCard ImageImportJson(String szJsonFilename) throws JSONException, VirtualCardException {                  // erase old image and create new one from Json description.
         File   file;
         String szJson;
         JSONObject jsonCardImage;
@@ -133,37 +402,45 @@ public abstract class VCard {
         }
 
         try {
-            VCard newVcard;
-            byte[] baShell = Base64.decode(jsonCardImage.getString("baShell"), Base64.DEFAULT);
+            VCard vc;
 
-            Shell shell = new Shell(baShell);
-            switch (shell.getFvc()) {
-                case 2:  newVcard = Cmd2.FactoryImportImage(jsonCardImage);  break;
-                case 7:  newVcard = Cmd7.FactoryImportImage(jsonCardImage);  break;
-                case 11: newVcard = Cmd11.FactoryImportImage(jsonCardImage); break;
-                case 12: newVcard = Cmd12.FactoryImportImage(jsonCardImage); break;
-                default: newVcard = Cmd0.FactoryImportImage(jsonCardImage);
+            baShell = DecodeJsonByteArray(jsonCardImage, "baShell");
+            shell   = new Shell(baShell);
+
+            switch (shell.getFvc()) {                                                               // Create the appropriate sub-class
+                case 2:  vc = new Cmd2();   break;
+                case 11: vc = new Cmd11();  break;
+                case 12: vc = new Cmd12();  break;
+                default: vc = new Cmd0();   break;
             }
+            vc.TitleSet(jsonCardImage.getString("szTitle"));
+            vc.JsonParse(jsonCardImage);                                                            // let it parse itself
 
-            Nvm.WipeDirectory();                                                                    // parsing went well so delete the old image
-            newVcard.SaveImage();                                                                   // Now save the new one.
+            nvm.WipeDirectory();                                                                    // parsing went well so delete the old image
 
-            newVcard.szTitle     = jsonCardImage.getString("szTitle");
-            newVcard.szFilename = file.getName();
-            return newVcard;
+            iAge = iAgeA = iAgeB = 0;
+            vc.ImageSave();                                                                         // Now save the new one.
+
+           vc.szFilename = file.getName();
+            return vc;
         }
-        catch (JSONException e) {
+        catch (Exception e) {
             throw new VirtualCardException("Error parsing Json: " + szJsonFilename);
         }
     }
 
 
-    public boolean ExportImage(String szJsonFilename) throws VirtualCardException {
-        JSONObject jsonCardImage = ExportImage();
+    // ===============================================
+    // ExportImage:
+    //      Archive the current Image as a JSON file.
+    //
+    // ===============================================
+    public void ImageExportJson(String szJsonFilename) throws VirtualCardException {
+        JSONObject jsonCardImage = JsonExport();
         String szCardImage = jsonCardImage.toString();
         File file = new File(szJsonFilename);
         try {
-            file.createNewFile();
+            boolean b = file.createNewFile();
             FileWriter writer = new FileWriter(file);
             writer.write(szCardImage);
             writer.close();
@@ -171,15 +448,29 @@ public abstract class VCard {
         } catch (IOException e) {
             throw new VirtualCardException("Error writing file: " + szJsonFilename);
         }
-
-        return true;
     };
 
+    public abstract int         ImageGetSize();                                                     // subclasses indicate their own storage volume requirements
+    public abstract void        ImageDeserialize(ByteBuffer buffer);                                // subclasses populate their working variables here.
+    public abstract void        ImageSerialize(ByteBuffer buffer);                                  // subclasses serialize their variables here.
+    public abstract void        JsonParse(JSONObject jsonCardImage) throws JSONException, VirtualCardException; // parse the JSON image into the CM Image
+    public abstract JSONObject  JsonExport();                                                       // Make a Json String of the CM Image
+    public abstract void        Reset() throws VirtualCardException;                                // Called on Reset.
+    public abstract byte[]      Select();                                                            // build the FCI's A5 contents.
+    public abstract byte[]      Dispatch(byte[] baApdu);                                             // Process the incoming APDU
 
-    public abstract void        SaveImage();                                                        // Save the CM image to the NVM store.
-    public abstract JSONObject ExportImage();                                                       // Make a Json String of the CM Image
-    public abstract void       Reset();                                                             // Called on Reset.
-    public abstract byte[]     Select();                                                            // build the FCI's A5 contents.
-    public abstract byte[]     Dispatch(byte[] baApdu);                                             // Process the incoming APDU
 
-}
+
+
+// =================================================================================================
+// Image management functions
+
+
+    // Image variable will be accounted for in the sub-class
+
+
+
+
+
+
+    }

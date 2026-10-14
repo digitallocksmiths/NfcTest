@@ -30,14 +30,23 @@ public class MyHostApduService extends HostApduService {
     public void onCreate() {                                                                        // create service
         super.onCreate();
         Log.d(TAG, "Service created");
-        VCard.Initialize(GetImageDirectory());                                                      // set up the classes NVM
-        vcard = VCard.FactoryLoadImage();                                                           // load the CM image.
+        try {
+            VCard.Initialize(GetImageDirectory());                                                      // set up the classes NVM
+            vcard = VCard.FactoryImageLoad();                                                           // load the CM image.
+        } catch (VCard.VirtualCardException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Override
     public void onDeactivated(int reason) {                                                         // deselect or deactivate
         Log.d(TAG, "Service deactivated: " + reason);
-        vcard.Reset();
+        //try {
+        //    vcard.Reset();
+        //}
+        //catch (VCard.VirtualCardException e) {
+        //    Log.d(TAG, "Reset(): " + e.getMessage());
+        // }
     }
 
     @Override

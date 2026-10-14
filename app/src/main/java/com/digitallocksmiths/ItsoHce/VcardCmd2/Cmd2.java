@@ -4,63 +4,69 @@ import android.util.Log;
 
 import com.digitallocksmiths.ItsoHce.VCard;
 
+import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.nio.ByteBuffer;
 
 
 public class Cmd2 extends VCard {
     private static final String TAG = "Cmd2";
 
-    private JSONObject szJsonCardImage = null;
-
     // Constructor
-    public Cmd2() {
+    public Cmd2()  throws VCard.VirtualCardException {
         super();
+        TitleSet("Uninitialized CMD 2 Card Image");
     }
 
+    // ========================================
+    // ImageGetSize()
+    //    Return the size of the serialized image in bytes.
+    // ========================================
+    public int      ImageGetSize() {                                                                // subclasses indicate their own storage volume requirements
+        Log.d(TAG, "ImageGetSize");
+        return 0;
+    };
 
     // ========================================
-    // FactoryLoadImage()
+    // ImageDeserialize()
     //      Make a new VCard from NVM store.
     // ========================================
-    public static  VCard FactoryLoadImage() {                                                       // bootstrap load existing image from NVM store
-        Log.d(TAG, "FactoryLoadImage");
-        // ToDo: Read the files into the image here.
-        Cmd2 cmd = new Cmd2();
-        cmd.szTitle = "Uninitialized CMD2 Card Image";
-        return cmd;
+    public void     ImageDeserialize(ByteBuffer buffer) {                                           // subclasses populate their working variables here.
+        Log.d(TAG, "ImageDeserialize");
+        // ToDo: Read the files into the subclass's image variables.
     }
 
     // ========================================
-    // FactoryImportImage(JSONObject szJsonCardImage)
-    //      Make a new VCard from the JSON image.
+    // ImageSerialize()
+    //      Add this class's image variables
+    //      to the buffer.
     // ========================================
-    public static  VCard FactoryImportImage(JSONObject szJsonCardImage) {                           // new image from Json template
-        Log.d(TAG, "FactoryImportImage");
+    public void     ImageSerialize(ByteBuffer buffer) {                                             // subclasses serialize their variables here.
+        Log.d(TAG, "ImageSerialize");
+        // ToDo: Serialize the image here.
+    }
+
+    // ========================================
+    // JsonParse(JSONObject szJsonCardImage)
+    //      populate the VCARD from the JSON
+    //      input.
+    // ========================================
+    public void     JsonParse(JSONObject jsonCardImage) throws JSONException, VirtualCardException {  // parse the JSON image into the CM Image.
+        Log.d(TAG, "JsonParse");
         // ToDo: Read the Json image here.
-        Cmd2 v = new Cmd2();
-        v.szJsonCardImage = szJsonCardImage;
-        return v;
     }
 
     // ========================================
-    // SaveImage()
+    // JsonExport()
     //      Save the CM image to the NVM store.
     // ========================================
-    public void        SaveImage() {                                                                // Save the CM image to the NVM store.
-        Log.d(TAG, "SaveImage");
-        // ToDo: Save the image to files here.
+    public JSONObject  JsonExport() {                                                               // Make a Json String of the CM Image
+        Log.d(TAG, "JsonExport");
+        // ToDo: create the Json file contents here.
+        return null;
     }
 
-    // ========================================
-    // ExportImage()
-    //      Make a JSON image of the CM.
-    // ========================================
-    public JSONObject ExportImage() {                                                               // CM image to Json.
-        Log.d(TAG, "ExportImage");
-        // ToDo: Make the Json file contents here.
-        return szJsonCardImage;
-    }
 
     // ========================================
     // Reset()

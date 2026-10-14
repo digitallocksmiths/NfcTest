@@ -1,6 +1,7 @@
 package com.digitallocksmiths.ItsoHce;
 
 import android.util.Base64;
+import android.util.Log;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -21,6 +22,7 @@ import java.io.IOException;
 
 
 public class Nvm {
+    String TAG = "Nvm";
 
     String szImageDir;
     // private Key Key;
@@ -37,11 +39,10 @@ public class Nvm {
     }
 
     public void Write(String szFilename, byte[] baFileContents) throws Exception {                   // Save to file
+        Log.d(TAG, "Write: " + szFilename);
+
         byte[] data = (baFileContents != null) ? baFileContents : new byte[0];
         String base64Str = Base64.encodeToString(data, Base64.NO_WRAP);
-        //try (BufferedWriter writer = new BufferedWriter(new FileWriter(szImageDir + szFilename))) {
-        //    writer.write(base64Str);
-        //}
 
         File file = new File(szImageDir + szFilename);
         try {
@@ -56,6 +57,8 @@ public class Nvm {
     }
 
     public byte[] Read(String szFilename)  {                                                        // Load from file
+        Log.d(TAG, "Read: " + szFilename);
+
         StringBuilder sb = new StringBuilder();
         try (BufferedReader reader = new BufferedReader(new FileReader(szImageDir + szFilename))) {
             String line;
@@ -64,7 +67,7 @@ public class Nvm {
             }
             return Base64.decode(sb.toString(), Base64.DEFAULT);
         }
-        catch (Exception e) {
+        catch (Exception e) {                                                                       // if it fails we get null
             return null;
         }
     }
