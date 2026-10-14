@@ -117,7 +117,7 @@ public class MainActivity extends AppCompatActivity {
         if (vcard != null) {
             try {
                     vcard.ImageExportJson(szJsonFilename);
-                    Print("Image save: " + vcard.szSavedAsFilename + "\n");
+                    //Print("Image save: " + vcard.szSavedAsFilename + "\n");
             }
             catch (Exception e) {
                 Print("Exception: " + e.getMessage() + "\n");

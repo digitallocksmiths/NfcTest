@@ -32,7 +32,7 @@ public class Cmd2 extends VCard {
     // ImageDeserialize()
     //      Make a new VCard from NVM store.
     // ========================================
-    public void     ImageDeserialize(ByteBuffer buffer) {                                           // subclasses populate their working variables here.
+    protected void  ImageDeserialize(ByteBuffer buffer) {                                           // subclasses populate their working variables here.
         Log.d(TAG, "ImageDeserialize");
         // ToDo: Read the files into the subclass's image variables.
     }
@@ -42,7 +42,7 @@ public class Cmd2 extends VCard {
     //      Add this class's image variables
     //      to the buffer.
     // ========================================
-    public void     ImageSerialize(ByteBuffer buffer) {                                             // subclasses serialize their variables here.
+    protected void  ImageSerialize(ByteBuffer buffer) {                                             // subclasses serialize their variables here.
         Log.d(TAG, "ImageSerialize");
         // ToDo: Serialize the image here.
     }
@@ -52,7 +52,7 @@ public class Cmd2 extends VCard {
     //      populate the VCARD from the JSON
     //      input.
     // ========================================
-    public void     JsonParse(JSONObject jsonCardImage) throws JSONException, VirtualCardException {  // parse the JSON image into the CM Image.
+    protected void  JsonParse(JSONObject jsonCardImage) throws JSONException, VirtualCardException {  // parse the JSON image into the CM Image.
         Log.d(TAG, "JsonParse");
         // ToDo: Read the Json image here.
     }
@@ -61,7 +61,7 @@ public class Cmd2 extends VCard {
     // JsonExport()
     //      Save the CM image to the NVM store.
     // ========================================
-    public JSONObject  JsonExport() {                                                               // Make a Json String of the CM Image
+    protected JSONObject JsonExport() {                                                             // Make a Json String of the CM Image
         Log.d(TAG, "JsonExport");
         // ToDo: create the Json file contents here.
         return null;
@@ -93,7 +93,7 @@ public class Cmd2 extends VCard {
     // Dispatch()
     //      process the APDU
     // ========================================
-    public byte[] Dispatch(byte[] baApdu) {                                                         // Card dispatch
+    protected byte[] Dispatch(byte[] baApdu) {                                                         // Card dispatch
         Log.d(TAG, "Dispatch");
         // ToDo: Process APDUs here.
         return Response(SW.INS_NOT_SUPPORTED);
