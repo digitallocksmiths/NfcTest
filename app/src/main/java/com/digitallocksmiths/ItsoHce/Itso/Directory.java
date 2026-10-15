@@ -6,16 +6,17 @@ public class Directory {
 
     private final int    iE;
     private final int    iSctl;
-    private final byte[] baDirectory;
+    private              byte[] baDirectory;
 
-    public Directory(int iE, int iSctl, byte[] baDirectory) {
-        this.iE          = iE;
-        this.iSctl       = iSctl;
+    public Directory(Shell shell, byte[] baDirectory) {
+        this.iE          = shell.getE();
+        this.iSctl       = shell.getSctl();
         this.baDirectory = baDirectory;
     }
 
-    public int getLength()         { return baDirectory.length; }
-    public byte[] getDirectory()   { return baDirectory; }
+    public int getLength()          { return baDirectory.length; }
+    public byte[] Get()             { return baDirectory; }
+    public byte[] Set(byte[] baV)   { baDirectory = baV; return baDirectory; }
 
     public byte[] getEntry(int i) {
         int iOffset = 2 + (i-1)* 5;

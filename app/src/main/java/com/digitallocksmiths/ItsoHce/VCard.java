@@ -253,14 +253,14 @@ public abstract class VCard {
         }
     };
 
-    protected abstract int         ImageGetSize();                                                  // subclasses indicate their own storage volume requirements
-    protected abstract void        ImageDeserialize(ByteBuffer buffer);                             // subclasses populate their working variables here.
-    protected abstract void        ImageSerialize(ByteBuffer buffer);                               // subclasses serialize their variables here.
-    protected abstract void        JsonParse(JSONObject jsonCardImage) throws JSONException, VirtualCardException; // parse the JSON image into the CM Image
-    protected abstract void        JsonExport(JSONObject jsonCardImage) throws JSONException;       // Make a Json String of the CM Image
-    protected abstract void        Reset() throws VirtualCardException;                             // Called on Reset.
-    protected abstract byte[]      Select();                                                        // build the FCI's A5 contents.
-    protected abstract byte[]      Dispatch(byte[] baApdu);                                         // Process the incoming APDU
+    protected abstract int      ImageGetSize();                                                     // subclasses indicate their own storage volume requirements
+    protected abstract void     ImageDeserialize(ByteBuffer buffer)  throws VirtualCardException;   // subclasses populate their working variables here.
+    protected abstract void     ImageSerialize(ByteBuffer buffer);                                  // subclasses serialize their variables here.
+    protected abstract void     JsonParse(JSONObject jsonCardImage) throws JSONException, VirtualCardException; // parse the JSON image into the CM Image
+    protected abstract void     JsonExport(JSONObject jsonCardImage) throws JSONException;          // Make a Json String of the CM Image
+    protected abstract void     Reset() throws VirtualCardException;                                // Called on Reset.
+    protected abstract byte[]   Select();                                                           // build the FCI's A5 contents.
+    protected abstract byte[]   Dispatch(byte[] baApdu);                                            // Process the incoming APDU
 
 
 
@@ -488,9 +488,9 @@ public abstract class VCard {
         b.put(baBlob);
     }
 
-    public static  byte[] DeserializeByteArray(ByteBuffer b) {
+    public static  byte[] DeserializeByteArray(ByteBuffer b) throws VirtualCardException {
         if (b.get() != ByteSentinel) {
-            return null;
+            throw new VirtualCardException("Corrupt Image File");
         }
         int len = b.getInt();
         byte[] baBlob = new byte[len];
