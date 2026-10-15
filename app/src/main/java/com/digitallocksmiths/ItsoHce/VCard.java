@@ -10,6 +10,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.security.KeyStore;
+import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
 
 import org.json.JSONException;
@@ -55,8 +56,9 @@ public abstract class VCard {
     // serializer functions.
     private static  int         iAge = 0;                               // age of this file ( monotonic counter or updates.)
     public  static  byte[]      baShell = new byte[24];                 // will/must be 0x18 bytes (i.e. no MCRN)
+    public  static  byte[]      baName  = new byte[32];                 // space for the title of the card.
     public  static  byte[]      baTitle = new byte[32];                 // space for the title of the card.
-    private final   int         iNvmSizeSuper = 60;                     // size of the above savable data.
+    private final   int         iNvmSizeSuper = 92;                     // size of the above savable data.
 
 
 
@@ -101,11 +103,11 @@ public abstract class VCard {
 
     // ===============================================
     // base class constructor:
-    //      Nothing to do here!
+    //      Little to do here!
     //
     // ===============================================
     public VCard() throws VCard.VirtualCardException {                                              // constructor invoked via subclass.
-        ;
+        TitleSet("Uninitialized Card Image");
     }
 
 
@@ -139,6 +141,7 @@ public abstract class VCard {
                     case 0x0C:  vc = new Cmd12(); break;
                     default:    vc = new Cmd0(); break;
                 }
+                buffer.get(baName);                                                                 //                  Name;
                 buffer.get(baTitle);                                                                //                  Title;
                 vc.ImageDeserialize(buffer);
                 return vc;
@@ -157,12 +160,13 @@ public abstract class VCard {
     //
     // ===============================================
     public void ImageSave() throws VirtualCardException,  VirtualCardException, Exception {
-        ByteBuffer buffer = ByteBuffer.allocate(iNvmSizeSuper + ImageGetSize() + 4);                // accumulator for the saved image  super+sub+crc
+        ByteBuffer buffer = ByteBuffer.allocate(iNvmSizeSuper + ImageGetSize() + 4);        // accumulator for the saved image  super+sub+crc
         buffer.putInt(++iAge);                                                                      // Add super's elements first.  iAge +
         buffer.put(baShell);                                                                        //                              baShell.
+        buffer.put(baName);                                                                         //                              baName.
         buffer.put(baTitle);                                                                        //                              baTitle.
         ImageSerialize(buffer);                                                                     // next let the subclass serialize its image
-        if (iAgeA > iAgeB) { iAgeB = iAge; FileWriteEncryptedBuffer(Shadow.B, buffer); }           // helper for encrypting and saving the image
+        if (iAgeA > iAgeB) { iAgeB = iAge; FileWriteEncryptedBuffer(Shadow.B, buffer); }            // helper for encrypting and saving the image
         else               { iAgeA = iAge; FileWriteEncryptedBuffer(Shadow.A, buffer); }
     }
 
@@ -201,6 +205,7 @@ public abstract class VCard {
                 case 12: vc = new Cmd12();  break;
                 default: vc = new Cmd0();   break;
             }
+            vc.NameSet(jsonCardImage.getString("szName"));
             vc.TitleSet(jsonCardImage.getString("szTitle"));
             vc.JsonParse(jsonCardImage);                                                            // let it parse itself
 
@@ -224,7 +229,17 @@ public abstract class VCard {
     //
     // ===============================================
     public void ImageExportJson(String szJsonFilename) throws VirtualCardException {
-        JSONObject jsonCardImage = JsonExport();
+        JSONObject jsonCardImage;
+        try {
+            jsonCardImage = new JSONObject();
+            EncodeJsonByteArray(jsonCardImage, "baShell", baShell);
+            jsonCardImage.put ("szName", NameGet());
+            jsonCardImage.put ("szTitle", TitleGet());
+            JsonExport(jsonCardImage);
+        } catch (JSONException e) {
+            throw new VirtualCardException("Error exporting Json: " + szJsonFilename);
+        }
+
         String szCardImage = jsonCardImage.toString();
         File file = new File(szJsonFilename);
         try {
@@ -238,14 +253,14 @@ public abstract class VCard {
         }
     };
 
-    protected abstract int         ImageGetSize();                                                     // subclasses indicate their own storage volume requirements
-    protected abstract void        ImageDeserialize(ByteBuffer buffer);                                // subclasses populate their working variables here.
-    protected abstract void        ImageSerialize(ByteBuffer buffer);                                  // subclasses serialize their variables here.
+    protected abstract int         ImageGetSize();                                                  // subclasses indicate their own storage volume requirements
+    protected abstract void        ImageDeserialize(ByteBuffer buffer);                             // subclasses populate their working variables here.
+    protected abstract void        ImageSerialize(ByteBuffer buffer);                               // subclasses serialize their variables here.
     protected abstract void        JsonParse(JSONObject jsonCardImage) throws JSONException, VirtualCardException; // parse the JSON image into the CM Image
-    protected abstract JSONObject  JsonExport();                                                       // Make a Json String of the CM Image
-    protected abstract void        Reset() throws VirtualCardException;                                // Called on Reset.
-    protected abstract byte[]      Select();                                                            // build the FCI's A5 contents.
-    protected abstract byte[]      Dispatch(byte[] baApdu);                                             // Process the incoming APDU
+    protected abstract void        JsonExport(JSONObject jsonCardImage) throws JSONException;       // Make a Json String of the CM Image
+    protected abstract void        Reset() throws VirtualCardException;                             // Called on Reset.
+    protected abstract byte[]      Select();                                                        // build the FCI's A5 contents.
+    protected abstract byte[]      Dispatch(byte[] baApdu);                                         // Process the incoming APDU
 
 
 
@@ -335,6 +350,12 @@ public abstract class VCard {
         return true;
     }
 
+    protected static byte[] DecodeStringToByteArray(String szString) {                              // Sz ==> ba
+        return Base64.decode(szString, Base64.DEFAULT);
+    }
+    protected static String EncodeByteArrayToString(byte[] baBlob) {                                // ba ==> Sz
+        return Base64.encodeToString(baBlob, Base64.NO_WRAP);
+    }
     protected static byte[] DecodeJsonByteArray(JSONObject szJsonCardImage, String szKey) {
         try {
             String S = szJsonCardImage.getString(szKey);
@@ -348,15 +369,26 @@ public abstract class VCard {
         }
     }
 
-    public void TitleSet(String szTitle) {
-        byte[] ba = szTitle.getBytes();
-        baTitle = java.util.Arrays.copyOf(ba, baTitle.length);
+    protected static void EncodeJsonByteArray(JSONObject szJsonCardImage, String szKey, byte[] baBlob) {
+        try {
+            if ((baBlob == null) || baBlob.length == 0) {
+                szJsonCardImage.put(szKey, JSONObject.NULL);
+                return;
+            }
+            szJsonCardImage.put(szKey, EncodeByteArrayToString(baBlob));
+        }
+        catch (JSONException e) {
+            return;
+        }
     }
 
-    public String TitleGet() {
-        //String sz = new String(baTitle, StandardCharsets.UTF_8);
-        return new String(baTitle);
-    }
+
+
+
+    public void   TitleSet(String szTitle) { baTitle = java.util.Arrays.copyOf(szTitle.getBytes(), baTitle.length);   }  // Accessors for strings stored as fixed size byte arrays.
+    public String TitleGet()               { return new String(baTitle, StandardCharsets.UTF_8).trim();               }
+    public void   NameSet(String szName)   { baName = java.util.Arrays.copyOf(szName.getBytes(), baName.length);      }
+    public String NameGet()                { return new String(baName, StandardCharsets.UTF_8).trim();                }
 
 
     // ===============================================

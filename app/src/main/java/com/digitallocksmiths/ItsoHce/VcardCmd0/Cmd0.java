@@ -22,7 +22,7 @@ public class Cmd0 extends VCard {
     // ========================================
     public Cmd0() throws VCard.VirtualCardException {
         super();
-        TitleSet("Uninitialized CMD 0 Card Image");
+        NameSet("CMD 0");
 
         // CMD0 is the default so the following would have been set for all except this CMD.
         baShell = new byte[] { 24, 1, 99, 53, -105, 0,  0,  0,
@@ -73,10 +73,9 @@ public class Cmd0 extends VCard {
     // JsonExport()
     //      Save the CM image to the NVM store.
     // ========================================
-    protected JSONObject  JsonExport() {                                                            // Make a Json String of the CM Image
+    protected void  JsonExport(JSONObject jsonCardImage) {                                          // Add data to the JSON object.
         Log.d(TAG, "JsonExport");
         // ToDo: create the Json file contents here.
-        return null;
     }
 
 

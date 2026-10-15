@@ -29,5 +29,4 @@ public class Shell {
     public short getSecrec()        { return (short)((baShell[getLength()-2]<<8) | baShell[getLength()-1]); }
 
 
-
 }

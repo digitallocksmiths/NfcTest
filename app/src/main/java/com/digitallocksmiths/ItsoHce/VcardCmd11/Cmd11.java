@@ -41,7 +41,7 @@ public class Cmd11 extends VCard {
 
     private static final byte  bCHAL_SIZE       =   8;                                              // Size of Random Challenge Data
 
-    private static final byte  bPWD_SIZE        =  16;                                              // Size of Password Data
+    private static final byte  bPWD_SIZE        =   8;                                              // Size of Password Data
     private static class Password { byte[] baBody = new byte[bPWD_SIZE];  }
 
 
@@ -89,7 +89,7 @@ public class Cmd11 extends VCard {
     // ========================================
     public Cmd11()  throws VCard.VirtualCardException {
         super();
-        TitleSet("Uninitialized CMD 11 Card Image");
+        NameSet("CMD 11");
 
         mmmt            = new Mmmt(shell.getE());
         aPassword       = new Password[shell.getE()+1];
@@ -171,7 +171,7 @@ public class Cmd11 extends VCard {
     // JsonParse(JSONObject szJsonCardImage)
     //      Make a new VCard from the JSON image.
     // ========================================
-    protected void  JsonParse(JSONObject szJsonCardImage) throws JSONException, VirtualCardException {  // parse the JSON image into the CM Image
+    protected void  JsonParse(JSONObject jsonCardImage) throws JSONException, VirtualCardException {  // parse the JSON image into the CM Image
         Log.d(TAG, "JsonParse");
         // ToDo: Test this
 
@@ -179,21 +179,21 @@ public class Cmd11 extends VCard {
 
         // shell was read and parsed by the caller.
 
-        baAid           = DecodeJsonByteArray(szJsonCardImage, "baAid");
-        mAuthDesKeyA    = DecodeJsonByteArray(szJsonCardImage, "mAuthDesKeyA");
-        mAuthDesKeyB    = DecodeJsonByteArray(szJsonCardImage, "mAuthDesKeyB");
-        mAuthPseudoKeyA = DecodeJsonByteArray(szJsonCardImage, "mAuthPseudoKeyA");
-        mAuthPseudoKeyB = DecodeJsonByteArray(szJsonCardImage, "mAuthPseudoKeyB");
-        baPseudoShell   = DecodeJsonByteArray(szJsonCardImage, "baPseudoShell");
-        baUID           = DecodeJsonByteArray(szJsonCardImage, "baUID");
-        baPseudoUID     = DecodeJsonByteArray(szJsonCardImage, "baPseudoUID");
-        baAuthKasParams = DecodeJsonByteArray(szJsonCardImage, "baAuthKasParams");
+        baAid           = DecodeJsonByteArray(jsonCardImage, "baAid");
+        mAuthDesKeyA    = DecodeJsonByteArray(jsonCardImage, "mAuthDesKeyA");
+        mAuthDesKeyB    = DecodeJsonByteArray(jsonCardImage, "mAuthDesKeyB");
+        mAuthPseudoKeyA = DecodeJsonByteArray(jsonCardImage, "mAuthPseudoKeyA");
+        mAuthPseudoKeyB = DecodeJsonByteArray(jsonCardImage, "mAuthPseudoKeyB");
+        baPseudoShell   = DecodeJsonByteArray(jsonCardImage, "baPseudoShell");
+        baUID           = DecodeJsonByteArray(jsonCardImage, "baUID");
+        baPseudoUID     = DecodeJsonByteArray(jsonCardImage, "baPseudoUID");
+        baAuthKasParams = DecodeJsonByteArray(jsonCardImage, "baAuthKasParams");
 
-        mmmt.setDirPage(DecodeJsonByteArray(szJsonCardImage, "baDir"));                       // Dir into a sector
-        mmmt.setLogPage(DecodeJsonByteArray(szJsonCardImage, "baLog"));                       // Log into a sector
+        mmmt.setDirPage(DecodeJsonByteArray(jsonCardImage, "baDir"));                       // Dir into a sector
+        mmmt.setLogPage(DecodeJsonByteArray(jsonCardImage, "baLog"));                       // Log into a sector
 
         int iSector = 1;
-        JSONArray ipeList = szJsonCardImage.getJSONArray("baIpeList");                        // Ipes and Vrgs into sectors
+        JSONArray ipeList = jsonCardImage.getJSONArray("baIpeList");                        // Ipes and Vrgs into sectors
         for (int i = 0; i < ipeList.length(); i++) {                                                // should be E-1 of them.
             JSONObject ipe;
             try                     { ipe = ipeList.getJSONObject(i); }
@@ -205,7 +205,7 @@ public class Cmd11 extends VCard {
             iSector++;
         }
 
-        JSONArray pwdList = szJsonCardImage.getJSONArray("PasswordList");                     // Passwords into sectors
+        JSONArray pwdList = jsonCardImage.getJSONArray("PasswordList");                     // Passwords into sectors
         for (int i = 0; i < pwdList.length(); i++) {                                                // should be E of them.
             baTmp = Base64.decode(pwdList.getString(i), Base64.DEFAULT);
             if (baTmp != null) System.arraycopy(baTmp, 0, aPassword[i].baBody, 0, baTmp.length);
@@ -218,11 +218,38 @@ public class Cmd11 extends VCard {
     // JsonExport()
     //      Save the CM image to the NVM store.
     // ========================================
-    protected JSONObject  JsonExport() {                                                            // Make a Json String of the CM Image
+    protected void  JsonExport(JSONObject jsonCardImage) throws JSONException {                                          // Add data to the JSON object.
         Log.d(TAG, "JsonExport");
         // ToDo: create the Json file contents here.
-        return null;
+        EncodeJsonByteArray(jsonCardImage, "baAid",           baAid);
+        EncodeJsonByteArray(jsonCardImage, "mAuthDesKeyA",    mAuthDesKeyA);
+        EncodeJsonByteArray(jsonCardImage, "mAuthDesKeyB",    mAuthDesKeyB);
+        EncodeJsonByteArray(jsonCardImage, "mAuthPseudoKeyA", mAuthPseudoKeyA);
+        EncodeJsonByteArray(jsonCardImage, "mAuthPseudoKeyB", mAuthPseudoKeyB);
+        EncodeJsonByteArray(jsonCardImage, "baPseudoShell",   baPseudoShell);
+        EncodeJsonByteArray(jsonCardImage, "baUID",          baUID );
+        EncodeJsonByteArray(jsonCardImage, "baPseudoUID",     baPseudoUID);
+        EncodeJsonByteArray(jsonCardImage, "baAuthKasParams", baAuthKasParams);
+        EncodeJsonByteArray(jsonCardImage, "baDir",           mmmt.getDirPage());
+        EncodeJsonByteArray(jsonCardImage, "baLog",           mmmt.getLogPage());
+        JSONArray ipeList = new JSONArray();
+        for (int i = 1; i < shell.getE(); i++) {
+            JSONObject ipe = new JSONObject();
+            EncodeJsonByteArray(ipe, "baIpe", mmmt.getIpePage(i));
+            EncodeJsonByteArray(ipe, "baVrg", mmmt.getVrgPage(i));
+            ipeList.put(ipe);
+        }
+        jsonCardImage.put("baIpeList", ipeList);
+        JSONArray pwdList = new JSONArray();
+        for (Password password : aPassword) {
+            pwdList.put(EncodeByteArrayToString(password.baBody));
+            // EncodeByteArrayToString
+        }
+        jsonCardImage.put("PasswordList", pwdList);
+
+
     }
+
 
     // ========================================
     // Reset()

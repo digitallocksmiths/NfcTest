@@ -62,7 +62,7 @@ public class MainActivity extends AppCompatActivity {
             throw new RuntimeException(e);
         }
 
-        tv.append("Running: " + vcard.TitleGet() + "\n");
+        tv.append("Running: " + vcard.NameGet()  + ": " + vcard.TitleGet() + "\n");
 
     }
 
@@ -95,7 +95,7 @@ public class MainActivity extends AppCompatActivity {
         try {
             vcard = VCard.ImageImportJson(szJsonFilename);
             Print("Image load: " + vcard.szFilename + "\n");
-            Print("Running: " + vcard.TitleGet() + "\n");
+            Print("Running: " + vcard.NameGet() + ": " + vcard.TitleGet() + "\n");
             return;
         }
         catch (VCard.VirtualCardException e) {

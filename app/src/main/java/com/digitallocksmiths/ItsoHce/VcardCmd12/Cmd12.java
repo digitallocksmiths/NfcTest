@@ -19,7 +19,7 @@ public class Cmd12 extends VCard {
     // ========================================
     public Cmd12()  throws VCard.VirtualCardException {
         super();
-        TitleSet("Uninitialized CMD 12 Card Image");
+        NameSet("CMD 12");
     }
 
     // ========================================
@@ -65,10 +65,9 @@ public class Cmd12 extends VCard {
     // JsonExport()
     //      Save the CM image to the NVM store.
     // ========================================
-    protected JSONObject JsonExport() {                                                             // Make a Json String of the CM Image
+    protected void  JsonExport(JSONObject jsonCardImage) {                                          // Add data to the JSON object.
         Log.d(TAG, "JsonExport");
         // ToDo: create the Json file contents here.
-        return null;
     }
 
     // ========================================

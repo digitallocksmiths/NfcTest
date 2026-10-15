@@ -79,21 +79,24 @@ public class Mmmt {
         System.arraycopy(baSrc, 0, baDst, 0, Math.min(baSrc.length, baDst.length));
     }
 
-    public void setCCS(byte[] baV)  { arrayCopy(baV, baCSS); }	                                    // CCS accessors
-    public void getCCS(byte[] baV)  { arrayCopy(baCSS, baV); }
-
-    public int  getTsn()                            { return iTsn;                }                 // iTsn accessors
-    public void setTsn(int i)                       { iTsn = i;                   }
-    public void incTsn()                            { this.iTsn++;                }
-
-    public void setDirPage(byte[] baV)              { arrayCopy(baV, aIpe[iE].baBody); }            // Dir accessors
-    public void getDirPage(byte[] baV)              { arrayCopy(aIpe[iE].baBody, baV); }
-    public void setLogPage(byte[] baV)              { arrayCopy(baV, aIpe[iE-1].baBody); }          // Log accessors
-    public void getLogPage(byte[] baV)              { arrayCopy(aIpe[iE-1].baBody, baV); }
-    public void setIpePage(int iIndex, byte[] baV)  { arrayCopy(baV, aIpe[iIndex-1].baBody); }      // Ipe  accessors
-    public void getIpePage(int iIndex, byte[] baV)  { arrayCopy(aIpe[iIndex-1].baBody, baV); }
-    public void setVrgPage(int iIndex, byte[] baV)  { arrayCopy(baV, aVrg[iIndex-1].baBody); }      // VrgA accessors
-    public void getVrgPage(int iIndex, byte[] baV)  { arrayCopy(aVrg[iIndex-1].baBody, baV); }
+    public void   setCCS(byte[] baV)                  { arrayCopy(baV, baCSS);                  }   // CCS accessors
+    public void   getCCS(byte[] baV)                  { arrayCopy(baCSS, baV);                  }
+    public byte[] getCCS()                            { return baCSS;                           }
+    public void   setTsn(int i)                       { iTsn = i;                               }  // iTsn accessors
+    public int    getTsn()                            { return iTsn;                            }
+    public void   incTsn()                            { iTsn++;                                 }
+    public void   setDirPage(byte[] baV)              { arrayCopy(baV, aIpe[iE].baBody);      }   // Dir accessors
+    public void   getDirPage(byte[] baV)              { arrayCopy(aIpe[iE].baBody, baV);        }
+    public byte[] getDirPage()                        { return aIpe[iE].baBody;                 }
+    public void   setLogPage(byte[] baV)              { arrayCopy(baV, aIpe[iE-1].baBody);      }   // Log accessors
+    public void   getLogPage(byte[] baV)              { arrayCopy(aIpe[iE-1].baBody, baV);      }
+    public byte[] getLogPage()                        { return aIpe[iE-1].baBody;               }
+    public void   setIpePage(int iIndex, byte[] baV)  { arrayCopy(baV, aIpe[iIndex-1].baBody);  }   // Ipe  accessors
+    public void   getIpePage(int iIndex, byte[] baV)  { arrayCopy(aIpe[iIndex-1].baBody, baV);  }
+    public byte[] getIpePage(int iIndex)              { return aIpe[iIndex-1].baBody;           }
+    public void   setVrgPage(int iIndex, byte[] baV)  { arrayCopy(baV, aVrg[iIndex-1].baBody);  }   // VrgA accessors
+    public void   getVrgPage(int iIndex, byte[] baV)  { arrayCopy(aVrg[iIndex-1].baBody, baV);  }
+    public byte[] getVrgPage(int iIndex)              { return aVrg[iIndex-1].baBody;           }
 
 
     protected int   ImageGetSize() {                                                                // indicate our storage volume requirements
