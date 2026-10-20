@@ -23,7 +23,18 @@ public class Directory {
         return Arrays.copyOfRange(baDirectory, iOffset, iOffset+5);
     }
 
-    public boolean IsEntryValid(int i) {
+
+    public boolean E_Ext(int i) {
+        int iOffset = 2 + (i-1)* 5;
+        return (baDirectory[iOffset] & 0x80) == 0x80;
+    }
+
+    public short E_Oid(int i) {
+        int iOffset = 2 + (i-1)* 5;
+        return (short) (((baDirectory[iOffset] << 8 | baDirectory[iOffset+1]) >> 2) & 0x1FFF);
+    }
+
+    public boolean E_Empty(int i) {
         if (i < 1 || i > iE)                                                { return false; }
         int iOffset = 2 + (i - 1) * 5;
         for (int j = 0; j < 5; j++) { if (baDirectory[iOffset + j] != 0x00) { return true;  } }     // An entry is considered valid if it is NOT all zeros

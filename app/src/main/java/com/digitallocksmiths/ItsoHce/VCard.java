@@ -256,9 +256,9 @@ public abstract class VCard {
     protected abstract int      ImageGetSize();                                                     // subclasses indicate their own storage volume requirements
     protected abstract void     ImageDeserialize(ByteBuffer buffer)  throws VirtualCardException;   // subclasses populate their working variables here.
     protected abstract void     ImageSerialize(ByteBuffer buffer);                                  // subclasses serialize their variables here.
-    protected abstract void     JsonParse(JSONObject jsonCardImage) throws JSONException, VirtualCardException; // parse the JSON image into the CM Image
+    protected abstract void     JsonParse(JSONObject jsonCardImage)  throws JSONException, VirtualCardException; // parse the JSON image into the CM Image
     protected abstract void     JsonExport(JSONObject jsonCardImage) throws JSONException;          // Make a Json String of the CM Image
-    protected abstract void     Reset() throws VirtualCardException;                                // Called on Reset.
+    protected abstract void     Reset()                              throws VirtualCardException;   // Called on Reset.
     protected abstract byte[]   Select();                                                           // build the FCI's A5 contents.
     protected abstract byte[]   Dispatch(byte[] baApdu);                                            // Process the incoming APDU
 
@@ -304,6 +304,17 @@ public abstract class VCard {
         public static final short LAST_COMMAND_EXPECTED          = (short)0x6883;                   // Last command in chain expected
         public static final short COMMAND_CHAINING_NOT_SUPPORTED = (short)0x6884;                   // Command chaining not supported
     }
+
+    public static class ISO7816 {                                                                  // ISO7816 constants
+        public static final int OFFSET_CLA    = 0;
+        public static final int OFFSET_INS    = 1;
+        public static final int OFFSET_P1     = 2;
+        public static final int OFFSET_P2     = 3;
+        public static final int OFFSET_LC     = 4;
+        public static final int OFFSET_CDATA  = 5;
+    }
+
+
 
     public static class Shadow {
         public static final short A                       = 1;

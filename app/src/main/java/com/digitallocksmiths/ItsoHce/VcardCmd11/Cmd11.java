@@ -20,7 +20,14 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.nio.ByteBuffer;
+import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Arrays;
+
+import javax.crypto.Cipher;
+import javax.crypto.SecretKey;
+import javax.crypto.NoSuchPaddingException;
+import javax.crypto.spec.SecretKeySpec;
 
 
 public class Cmd11 extends VCard {
@@ -46,7 +53,7 @@ public class Cmd11 extends VCard {
     public boolean fPseudoAuthenticated = false;
     public short   sFciStart            = 0;                                                        // Short vars
     public short   sFciA5LenOffset      = 0;
-    public short   sAllocated           = 0;
+    // public short   sAllocated           = 0;
 
     // ==========================================================================
     // NV variables
@@ -60,6 +67,7 @@ public class Cmd11 extends VCard {
     private byte[] baPseudoShell;
     private byte[] baUID;
     private byte[] baPseudoUID;
+    private byte[] baCapabillities;
     private byte[] baAuthKasParams;
 
     private byte[]       baCSS       = new byte[8];                                                 // Commit Confirmation Signature
@@ -73,14 +81,30 @@ public class Cmd11 extends VCard {
     private Password[]   aPassword;                                                                 // 1-E+1: Password  (0-E)
 
 
+    private SecretKey DesKeyA;
+    private SecretKey DesKeyB;
+    private SecretKey DesKeyPseudoA;
+    private SecretKey DesKeyPseudoB;
 
-//  public static RandomData    Rng;                                                                // Shared Random generator.
+    private static final SecureRandom Rng = new SecureRandom();                                     // Shared Random generator.
+
+    public  static final Cipher       Cip;                                                          // challenge processor/SK generator.
+    static {
+        Cipher cipherInstance = null;
+            try {
+                cipherInstance = Cipher.getInstance("DESede/CBC/NoPadding");           // Initialize Cip as Triple DES in CBC mode with no padding
+            }  catch (java.security.NoSuchAlgorithmException e) {
+                    Log.e(TAG, "NoSuchAlgorithmException: DESede/CBC/NoPadding not found", e);
+            } catch (NoSuchPaddingException e) {
+                    Log.e(TAG, "NoSuchPaddingException: NoPadding not supported", e);
+            }
+            Cip = cipherInstance;
+    }
+
 //  public static Checksum      Crc;                                                                //        CRC resource.
-//  public static Cipher        Cip;                                                                // 		  challenge processor/SK generator.
 //  public static Signature     Sig;                                                                // 		  MAC verifyer/generator.
 //  public static DESKey        SessionKey;                                                         //        ephemeral (transient) session key.
 //  public static MessageDigest Hash;                                                               //		  Apdu Message digest.
-
 
 
     // ========================================
@@ -128,10 +152,11 @@ public class Cmd11 extends VCard {
                 SerializeOverhead + baPseudoShell.length +
                 SerializeOverhead + baUID.length +
                 SerializeOverhead + baPseudoUID.length +
+                SerializeOverhead + baCapabillities.length +
                 SerializeOverhead + baAuthKasParams.length +
                (SerializeOverhead + sPAGE_SIZE)  * aIpe.length +
                (SerializeOverhead + sPAGE_SIZE)  * aVrg.length +
-                SerializeOverhead + sPAGE_SIZE + /* TTLog */
+                SerializeOverhead + sPAGE_SIZE  /* TTLog */ +
                 SerializeOverhead + directory.getLength() +
                (SerializeOverhead + bPWD_SIZE)   * aPassword.length;
     };
@@ -154,6 +179,7 @@ public class Cmd11 extends VCard {
             baPseudoShell = DeserializeByteArray(buffer);
             baUID = DeserializeByteArray(buffer);
             baPseudoUID = DeserializeByteArray(buffer);
+            baCapabillities = DeserializeByteArray(buffer);
             baAuthKasParams = DeserializeByteArray(buffer);
             for (Sector sector : aIpe) {
                 sector.baBody = DeserializeByteArray(buffer);
@@ -166,6 +192,12 @@ public class Cmd11 extends VCard {
             for (Password password : aPassword) {
                 password.baBody = DeserializeByteArray(buffer);
             }
+
+            if ((mAuthDesKeyA    != null)  && (mAuthDesKeyA.length    > 0)) { DesKeyA       = new SecretKeySpec(mAuthDesKeyA,    "DESede"); }
+            if ((mAuthDesKeyB    != null)  && (mAuthDesKeyB.length    > 0)) { DesKeyB       = new SecretKeySpec(mAuthDesKeyB,    "DESede"); }
+            if ((mAuthPseudoKeyA != null)  && (mAuthPseudoKeyA.length > 0)) { DesKeyPseudoA = new SecretKeySpec(mAuthPseudoKeyA, "DESede"); }
+            if ((mAuthPseudoKeyB != null)  && (mAuthPseudoKeyB.length > 0)) { DesKeyPseudoB = new SecretKeySpec(mAuthPseudoKeyB, "DESede"); }
+
         }
         catch (VirtualCardException e) {
             Log.d(TAG, "Corrupt Image file");
@@ -190,6 +222,7 @@ public class Cmd11 extends VCard {
         SerializeByteArray(buffer, baPseudoShell);
         SerializeByteArray(buffer, baUID);
         SerializeByteArray(buffer, baPseudoUID);
+        SerializeByteArray(buffer, baCapabillities);
         SerializeByteArray(buffer, baAuthKasParams);
         for (Sector sector : aIpe)            { SerializeByteArray( buffer, sector.baBody);   }
         for (Sector sector : aVrg)            { SerializeByteArray( buffer, sector.baBody);   }
@@ -218,6 +251,7 @@ public class Cmd11 extends VCard {
         baPseudoShell   = DecodeJsonByteArray(jsonCardImage, "baPseudoShell");
         baUID           = DecodeJsonByteArray(jsonCardImage, "baUID");
         baPseudoUID     = DecodeJsonByteArray(jsonCardImage, "baPseudoUID");
+        baCapabillities = DecodeJsonByteArray(jsonCardImage, "baCapabillities");
         baAuthKasParams = DecodeJsonByteArray(jsonCardImage, "baAuthKasParams");
 
         int iSector = 1;
@@ -242,6 +276,11 @@ public class Cmd11 extends VCard {
         }
         // If we are successful the caller will erase the old image and then call SaveImage().
         //
+
+        if ((mAuthDesKeyA    != null)  && (mAuthDesKeyA.length    > 0)) { DesKeyA       = new SecretKeySpec(mAuthDesKeyA,    "DESede"); }
+        if ((mAuthDesKeyB    != null)  && (mAuthDesKeyB.length    > 0)) { DesKeyB       = new SecretKeySpec(mAuthDesKeyB,    "DESede"); }
+        if ((mAuthPseudoKeyA != null)  && (mAuthPseudoKeyA.length > 0)) { DesKeyPseudoA = new SecretKeySpec(mAuthPseudoKeyA, "DESede"); }
+        if ((mAuthPseudoKeyB != null)  && (mAuthPseudoKeyB.length > 0)) { DesKeyPseudoB = new SecretKeySpec(mAuthPseudoKeyB, "DESede"); }
     }
 
 
@@ -260,12 +299,13 @@ public class Cmd11 extends VCard {
         EncodeJsonByteArray(jsonCardImage, "baPseudoShell",   baPseudoShell);
         EncodeJsonByteArray(jsonCardImage, "baUID",          baUID );
         EncodeJsonByteArray(jsonCardImage, "baPseudoUID",     baPseudoUID);
+        EncodeJsonByteArray(jsonCardImage, "baCapabillities", baCapabillities);
         EncodeJsonByteArray(jsonCardImage, "baAuthKasParams", baAuthKasParams);
         EncodeJsonByteArray(jsonCardImage, "baDir",           directory.Get());
         EncodeJsonByteArray(jsonCardImage, "baLog",           TTLog.baBody);
         JSONArray ipeList = new JSONArray();
         for (int i = 1; i < shell.getE(); i++) {
-            if (directory.IsEntryValid(i)) {
+            if (directory.E_Empty(i)) {
                 JSONObject ipe = new JSONObject();
                 EncodeJsonByteArray(ipe, "baIpe", getIpe(i));
                 EncodeJsonByteArray(ipe, "baVrg", getVrg(i));
@@ -284,6 +324,7 @@ public class Cmd11 extends VCard {
     }
 
 
+    // =============================================================================================    Reset (abstract implementation)
     // ========================================
     // Reset()
     //      clear/init working variables.
@@ -299,41 +340,264 @@ public class Cmd11 extends VCard {
         fPseudoAuthenticated = false;
         sFciStart            = 0;
         sFciA5LenOffset      = 0;
-        sAllocated           = 0;
+        //sAllocated           = 0;
 
     }
 
+    // =============================================================================================    Select (abstract implementation)
     // ========================================
     // Select()
-    //      construct and return the FCI
+    //      construct and return the FCI.A5's contents
     // ========================================
-    public byte[] Select() {                                                                        // Card select
-        Log.d(TAG, "Select");                                                                       // Build FCI.A5's contents
-        try {
+    public byte[] Select() {                                                                        // *** Card select
+        Log.d(TAG, "Select");                                                                  //
+        try {                                                                                       //
             Reset();                                                                                // Clear on reset//select variables initialized.
-        }
-        catch (VirtualCardException e) {
-            Log.d(TAG, "Select: + " + e.getMessage() );
-            return new byte[] { (byte)0x80, 1, 11};
-        }
+        }                                                                                           //
+        catch (VirtualCardException e) {                                                            //
+            Log.d(TAG, "Select: + " + e.getMessage() );                                        // report trouble if needed
+            return new byte[] { (byte)0x80, 1, 11};                                                 //
+        }                                                                                           //
+                                                                                                    //
+        if (baPseudoShell != null && baPseudoShell.length > 0) { return FciBuildRandom(); }         // Build FCI for random  UID host
+        else                                                   { return FciBuildStatic(); }         //               static  UID host
+    }                                                                                               //
 
-        // ToDo: Build the FCI A5 contents here
-        return new byte[] { (byte)0x80, 1, 11};
+
+    private static final byte bTagShell          = (byte)0xC0;                                      // FCI Tags
+    private static final byte bTagCapabilities   = (byte)0xC1;                                      //
+    private static final byte bTagDirectory      = (byte)0xC2;                                      //
+    private static final byte bTagOidList        = (byte)0xC3;                                      //
+    private static final byte bTagCss            = (byte)0xC4;                                      //
+    private static final byte bTagChallenge      = (byte)0xC5;                                      //
+    private static final byte bTagPseudoUid      = (byte)0xC6;                                      //
+    private static final byte bTagStaticUid      = (byte)0xC7;                                      //
+    private static final byte bTagAuth           = (byte)0xC8;                                      //
+
+    private byte[] FciBuildStatic() {                                                               // *** Static UID FCI
+        ArrayList<byte[]> tagList = new ArrayList<>();
+        tagList.add(TlvBuildPrimitive(bTagShell,        baShell));
+        tagList.add(TlvBuildPrimitive(bTagCapabilities, baCapabillities));
+        tagList.add(TlvBuildPrimitive(bTagDirectory,    directory.Get()));
+        tagList.add(TlvBuildPrimitive(bTagOidList,      ConstructOids()));
+        tagList.add(TlvBuildPrimitive(bTagCss,          baCSS));
+        tagList.add(TlvBuildPrimitive(bTagChallenge,    ConstructChallenge(DesKeyA)));
+        tagList.add(TlvBuildPrimitive(bTagAuth,         baAuthKasParams));
+        return FciBuild(tagList);
     }
+
+    private byte[] FciBuildRandom() {                                                               // *** Random UID FCI
+        ArrayList<byte[]> tagList = new ArrayList<>();
+        tagList.add(TlvBuildPrimitive(bTagShell,        baPseudoShell));
+        tagList.add(TlvBuildPrimitive(bTagCapabilities, baCapabillities));
+        tagList.add(TlvBuildPrimitive(bTagCss,          baCSS));
+        tagList.add(TlvBuildPrimitive(bTagChallenge,    ConstructChallenge(DesKeyPseudoA)));
+        tagList.add(TlvBuildPrimitive(bTagPseudoUid,    baPseudoUID));
+        tagList.add(TlvBuildPrimitive(bTagAuth,         baAuthKasParams));
+        return FciBuild(tagList);
+    }
+
+    private byte[] FciBuildReselect() {                                                             // *** Reselection FCI
+        ArrayList<byte[]> tagList = new ArrayList<>();
+        tagList.add(TlvBuildPrimitive(bTagShell,        baShell));
+        tagList.add(TlvBuildPrimitive(bTagDirectory,    directory.Get()));
+        tagList.add(TlvBuildPrimitive(bTagOidList,      ConstructOids()));
+        tagList.add(TlvBuildPrimitive(bTagChallenge,    ConstructChallenge(DesKeyA)));
+        tagList.add(TlvBuildPrimitive(bTagStaticUid,    baUID));
+        tagList.add(TlvBuildPrimitive(bTagAuth,         baAuthKasParams));
+        return FciBuild(tagList);
+    }
+
+    private byte[] FciBuild(ArrayList<byte[]> tagList) {                                            // *** FciBuild
+        int iLen = 0;                                                                               //      TLV element list into byte[]
+        for (byte[] baTt : tagList) { iLen += baTt.length; }                                        //      calculate space to return all
+        byte[] baA5contents = new byte[iLen];                                                       //      create that much  space
+        int iOffset = 0;                                                                            //
+        for (byte[] baTt : tagList) {                                                               //      copy each tlv into this space
+            System.arraycopy(baTt, 0, baA5contents, iOffset, baTt.length);                   //
+            iOffset += baTt.length;                                                                 //
+        }                                                                                           //
+        return baA5contents;                                                                        // return with a job done well!
+    }                                                                                               //
+
+    private byte[] TlvBuildPrimitive(byte bTag, byte[] baV) {                                       // *** TlvBuildPrimitive
+        byte[] baTlv;                                                                               //      make a ptomative T.L.V.
+        if (baV.length <= 127) { baTlv = new byte[2 + baV.length]; }                                //      ? length > 127 needs '1':: len
+        else                   { baTlv = new byte[2 + 1 + baV.length]; }                            //        length < 128 is just a simple length
+        int iOffset = 0;                                                                            //        Note: Max length catered for here is 255!
+        baTlv[iOffset++] = bTag;                                                                    //      insert T
+        if (baV.length > 127) { baTlv[iOffset++] = 1; }                                             //      insert L
+        baTlv[iOffset++] = (byte)baV.length;                                                        //
+        System.arraycopy(baV, 0, baTlv, iOffset, baV.length);                                //      insert V
+        return baTlv;                                                                               // return. job done.
+    }
+
+    private byte[] ConstructChallenge(SecretKey key) {                                              // *** ConstructChallenge
+        Rng.nextBytes(baChallenge);                                                                 //  make random challenge
+                                                                                                    //
+        if (shell.getKsc() == 0x04) {                                                               // ? DESFire style
+            try {                                                                                   //
+                Cip.init(Cipher.ENCRYPT_MODE, key);                                                 //      it needs to be encrypted
+                baChallengeTemp = Cip.doFinal(baChallenge);                                         //
+            } catch (Exception e) {                                                                 //
+                Log.e(TAG, "ConstructChallenge: Encryption failed: " + e.getMessage());        //       report problems.
+                System.arraycopy(baChallenge, 0, baChallengeTemp, 0, bCHAL_SIZE);    //
+            }                                                                                       //
+        }                                                                                           //
+        else {                                                                                      // ? CMD2 style
+            System.arraycopy(baChallenge, 0, baChallengeTemp, 0, bCHAL_SIZE);        //
+        }                                                                                           //
+                                                                                                    //
+        return baChallengeTemp;                                                                     // That's all folks.
+    }                                                                                               //
+
+    private byte[] ConstructOids() {                                                                // *** ConstructOids
+        byte[] baOids = new byte[2 * (shell.getE()-1)];                                             //      make a list of the IPE owners.
+        for (int i = 1; i < shell.getE()-1; i++) {                                                  //      One enty for each E/possible IPE
+            short sOid = 0;                                                                         //
+            if (directory.E_Empty(i)) {                                                        //      used?
+                sOid = directory.E_Oid(i);                                                         //      get the OID (13 bits from directory.E[i])
+                if (directory.E_Ext(i)) {                                                             //      Do we need to extend the OID by the ISAM fudge factor?
+                    int iOff = 2 + aIpe[i-1].baBody[0] & (byte)0xFC;                                //          Top bits are collected from the IPE's instance ID
+                    switch (aIpe[i-1].baBody[iOff] & (byte)0x07) {                                  //          KID, ISAMID[4], (id-bits 18-16 are interesting)
+                        case 4:                                                                     //                  100
+                        case 5: sOid |= (short)0x2000; break;                                       //                  101 => +0x2000
+                        case 6: sOid |= (short)0x6000; break;                                       //                  110 => +0x6000
+                        case 7: sOid |= (short)0xE000; break;                                       //                  111 => +0xE000
+                    }                                                                               //
+                }                                                                                   //
+                baOids[(i-1)*2    ] = (byte)(sOid >> 8);                                            //      Add it to of table uder construction.
+                baOids[(i-1)*2 + 1] = (byte)sOid;                                                   //
+            }                                                                                       //
+        }                                                                                           //
+        return baOids;                                                                              // return the constructed table
+    }
+
+
+    // =============================================================================================    Dispatch (abstract implementation)
+
+    // Commands
+    public static final byte bOurCLA           	=  (byte)0x90;
+
+    public static final byte bINS_Authenticate  =  (byte)0x10;
+    public static final byte bINS_ReadIpe       =  (byte)0x12;
+    public static final byte bINS_ReadVrg       =  (byte)0x14;
+    public static final byte bINS_ReadLog       =  (byte)0x16;
+    public static final byte bINS_UpdateIpe     =  (byte)0x18;
+    public static final byte bINS_UpdateVrg     =  (byte)0x1A;
+    public static final byte bINS_UpdateLog     =  (byte)0x1C;
+    public static final byte bINS_UpdateDir     =  (byte)0x1E;
+    public static final byte bINS_EndSession    =  (byte)0x20;
+    public static final byte bINS_Reselect      =  (byte)0x22;
 
     // ========================================
     // Dispatch()
     //      process the APDU
     // ========================================
-    protected byte[] Dispatch(byte[] baApdu) {                                                         // Card dispatch
+    protected byte[] Dispatch(byte[] baApdu) {                                                      // *** Card dispatch
         Log.d(TAG, "Dispatch");
-        // ToDo: Process APDUs here.
-        return Response(SW.INS_NOT_SUPPORTED);
+
+        if (baApdu[ISO7816.OFFSET_CLA] != bOurCLA) {                                                // Must be out CLA
+            return Response(SW.CLA_NOT_SUPPORTED);                                                  //      nothing else is good enough.
+        }                                                                                           //
+
+        if (!fAuthenticated) {                                                                      // Not authenticated yet...
+            switch (baApdu[ISO7816.OFFSET_INS]) {                                                   //      Which INS do we want ?
+                case bINS_Authenticate: return DoAuthenticate(baApdu);                              //      supported
+                case bINS_ReadIpe:      return DoReadIpe(baApdu);                                   //      ..
+                case bINS_ReadVrg:      return DoReadVrg(baApdu);                                   //      ..
+                case bINS_ReadLog:      return DoReadLog(baApdu);                                   //      ..
+                case bINS_Reselect:     return DoReselect(baApdu);                                  //      ..
+                case bINS_UpdateIpe:                                                                //      unsuported
+                case bINS_UpdateVrg:                                                                //      ..
+                case bINS_UpdateLog:                                                                //      ..
+                case bINS_UpdateDir:                                                                //      ..
+                case bINS_EndSession:   return Response(SW.SECURITY_STATUS_NOT_SATISFIED);          //      ..
+                default:                return Response(SW.INS_NOT_SUPPORTED);                      //      unrecognised
+            }                                                                                       //
+        }                                                                                           //
+        else if (fAuthenticated) {                                                                  // Authenticated, so Secure session active
+            switch (baApdu[ISO7816.OFFSET_INS]) {                                                   //      Which INS do we want ?
+                case bINS_Authenticate: return Response(SW.CONDITIONS_NOT_SATISFIED);               //      out of context
+                case bINS_ReadIpe:      return DoReadIpe(baApdu);                                   //      supported
+                case bINS_ReadVrg:      return DoReadVrg(baApdu);                                   //      ..
+                case bINS_ReadLog:      return DoReadLog(baApdu);                                   //      ..
+                case bINS_Reselect:     return DoReselect(baApdu);                                  //      ..
+                case bINS_UpdateIpe:    return DoUpdateIpe(baApdu);                                 //      ..
+                case bINS_UpdateVrg:    return DoUpdateVrg(baApdu);                                 //      ..
+                case bINS_UpdateLog:    return DoUpdateLog(baApdu);                                 //      ..
+                case bINS_UpdateDir:    return DoUpdateDir(baApdu);                                 //      ..
+                case bINS_EndSession:   return DoEndSession(baApdu);                                //      ..
+                default:                return Response(SW.INS_NOT_SUPPORTED);                      //      unrecognised
+            }                                                                                       //
+        }
+        else {
+            return Response(SW.SECURITY_STATUS_NOT_SATISFIED);
+        }
     }
 
 
+    private byte[] DoAuthenticate(byte[] baApdu) {                                                  // *** DoAuthenticate
+        // ToDo: Implement Authentication
+        return Response(SW.UNKNOWN);
+    }
+
+    private byte[] DoReadIpe(byte[] baApdu) {                                                       // *** DoReadIpe
+        // ToDo: Implement DoReadIpe
+        return Response(SW.UNKNOWN);
+    }
+
+    private byte[] DoReadVrg(byte[] baApdu) {                                                       // *** DoReadVrg
+        // ToDo: Implement DoReadVrg
+        return Response(SW.UNKNOWN);
+    }
+
+    private byte[] DoReadLog(byte[] baApdu) {                                                       // *** DoReadLog
+        // ToDo: Implement DoReadLog
+        return Response(SW.UNKNOWN);
+    }
+
+    private byte[] DoReselect(byte[] baApdu) {                                                      // *** DoReselect
+        // ToDo: Implement DoReselect
+        return Response(SW.UNKNOWN);
+    }
+
+
+    private byte[] DoUpdateIpe(byte[] baApdu) {                                                     // *** DoUpdateIpe
+        // ToDo: Implement DoUpdateIpe
+        return Response(SW.UNKNOWN);
+    }
+
+
+    private byte[] DoUpdateVrg(byte[] baApdu) {                                                     // *** DoUpdateVrg
+        // ToDo: Implement DoUpdateVrg
+        return Response(SW.UNKNOWN);
+    }
+
+
+    private byte[] DoUpdateLog(byte[] baApdu) {                                                     // *** DoUpdateLog
+        // ToDo: Implement DoUpdateLog
+        return Response(SW.UNKNOWN);
+    }
+
+
+    private byte[] DoUpdateDir(byte[] baApdu) {                                                     // *** DoUpdateDir
+        // ToDo: Implement DoUpdateDir
+        return Response(SW.UNKNOWN);
+    }
+
+
+    private byte[] DoEndSession(byte[] baApdu) {                                                    // *** DoEndSession
+        // ToDo: Implement DoEndSession
+        return Response(SW.UNKNOWN);
+    }
+
+
+
+
+
 // ==========================================================================================
-// Because a phon keeps this in RAM and writes it to the file at the same time as the sectors
+// Because a phone keeps this in RAM and writes it to the file at the same time as the sectors
 // there is no need to juggle the free page mechanism.
 // Pages can be written directly at their own index.
 //
