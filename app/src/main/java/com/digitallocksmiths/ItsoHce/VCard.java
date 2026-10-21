@@ -271,6 +271,10 @@ public abstract class VCard {
 // Helper functions used by the subclasses.
 //
 
+    protected static class AuthenticationException extends Exception {                              // manages return logic for authentication failures.
+        public AuthenticationException() { super(); }
+    }
+
     public static class VirtualCardException extends Exception {                                    // our type of exception
         public VirtualCardException(String szMsg) {
             super(szMsg);
@@ -509,9 +513,30 @@ public abstract class VCard {
         return baBlob;
     }
 
+    protected static boolean ArraysAreEqual(byte[] baA, byte[] baB) {
+        if (baA.length != baB.length) {
+            return false;
+        }
+        for (int i = 0; i < baA.length; i++) {
+            if (baA[i] != baB[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    protected static boolean BytesMatch(byte[] baA, int iOffsetA, byte[] baB, int iOffsetB, int iLen) {
+        if (baA.length < iOffsetA + iLen) {               return false; }
+        if (baB.length < iOffsetB + iLen) {               return false; }
+        for (int i = 0; i < iLen; i++) {
+            if (baA[iOffsetA + i] != baB[iOffsetB + i]) { return false; }
+        }
+        return true;
+    }
 
 
 
 
 
-}
+
+    }

@@ -20,13 +20,19 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.nio.ByteBuffer;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.NoSuchPaddingException;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.DESedeKeySpec;
+import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
 
@@ -49,11 +55,14 @@ public class Cmd11 extends VCard {
 
     public byte[]  baChallenge          = new byte[bCHAL_SIZE];
     public byte[]  baChallengeTemp      = new byte[bCHAL_SIZE];
+
+    // ToDo: Make these booleans a secure boolean variant.
     public boolean fAuthenticated       = false;                                                    // Bool vars
     public boolean fPseudoAuthenticated = false;
-    public short   sFciStart            = 0;                                                        // Short vars
-    public short   sFciA5LenOffset      = 0;
-    // public short   sAllocated           = 0;
+    public boolean fUsingPseudoShellUID = false;
+    //public short   sFciStart            = 0;                                                        // Short vars
+    //public short   sFciA5LenOffset      = 0;
+    //public short   sAllocated           = 0;
 
     // ==========================================================================
     // NV variables
@@ -81,25 +90,46 @@ public class Cmd11 extends VCard {
     private Password[]   aPassword;                                                                 // 1-E+1: Password  (0-E)
 
 
-    private SecretKey DesKeyA;
-    private SecretKey DesKeyB;
-    private SecretKey DesKeyPseudoA;
-    private SecretKey DesKeyPseudoB;
+    private       SecretKey       DesKeyA;                                                          // initialized on image load.
+    private       SecretKey       DesKeyB;                                                          //
+    private       SecretKey       DesKeyPseudoA;                                                    //
+    private       SecretKey       DesKeyPseudoB;                                                    //
 
-    private static final SecureRandom Rng = new SecureRandom();                                     // Shared Random generator.
+    private       SecretKey       SessionKey;                                                       // ephemeral session key.
+    private final SecureRandom    Rng;                                                              // Random generator.
+    public  final Cipher          Cip;                                                              // challenge processor/SK generator.
+    private final MessageDigest   Hash;                                                             // session MAC generator
+    private final IvParameterSpec NullIV = new IvParameterSpec(new byte[8]);                        // IV = 0.0.0.0.0.0.0.0
 
-    public  static final Cipher       Cip;                                                          // challenge processor/SK generator.
-    static {
-        Cipher cipherInstance = null;
-            try {
-                cipherInstance = Cipher.getInstance("DESede/CBC/NoPadding");           // Initialize Cip as Triple DES in CBC mode with no padding
-            }  catch (java.security.NoSuchAlgorithmException e) {
-                    Log.e(TAG, "NoSuchAlgorithmException: DESede/CBC/NoPadding not found", e);
-            } catch (NoSuchPaddingException e) {
-                    Log.e(TAG, "NoSuchPaddingException: NoPadding not supported", e);
-            }
-            Cip = cipherInstance;
+    SecretKey ConstructDesKey(byte[] baKeyMaterial) {
+        byte[] baFullSizeKey;
+
+        switch (baKeyMaterial.length) {
+            case 24:    baFullSizeKey = baKeyMaterial;
+                        break;
+            case 16:    baFullSizeKey = new byte[24];
+                        System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 0, 16);
+                        System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 16, 8);
+                        break;
+            case 8:     baFullSizeKey = new byte[24];
+                        System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 0, 8);
+                        System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 8, 8);
+                        System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 16, 8);
+                        break;
+            default:    return null;
+        }
+
+        try {
+            DESedeKeySpec keySpec = new DESedeKeySpec(baFullSizeKey);
+            SecretKeyFactory mySecretKeyFactory = SecretKeyFactory.getInstance("DESede");
+            return mySecretKeyFactory.generateSecret(keySpec);
+        }
+        catch (Exception e) {
+            Log.e(TAG, "MakeKey: " + e.getMessage());
+            return null;
+        }
     }
+
 
 //  public static Checksum      Crc;                                                                //        CRC resource.
 //  public static Signature     Sig;                                                                // 		  MAC verifyer/generator.
@@ -128,10 +158,20 @@ public class Cmd11 extends VCard {
         for (int i = 0; i < aPassword.length; i++) {
             aPassword[i] = new Password();
         }
-
-        // ToDo: Do we need to allocate the space.
         // Deserialize will create and assign byte[]s.
+
+        try {
+            Rng  = new SecureRandom();
+            Hash = MessageDigest.getInstance("SHA-256");
+            Cip  = Cipher.getInstance("DESede/CBC/NoPadding");
+        } catch (NoSuchAlgorithmException | NoSuchPaddingException e) {
+            Log.e(TAG, "Cmd11: Crypto trouble ", e);
+            throw new VCard.VirtualCardException("Crypto Algorithm missing");
+        }
+
+            // ToDo: Do we need to allocate the space.
         // Just need to ensure JSON parser fills the correct size.
+        // also safe disposal of replaced data structures.
     }                                                                                               // Exit with all space allocated, to be populated later.
 
 
@@ -167,43 +207,43 @@ public class Cmd11 extends VCard {
     // ========================================
     protected void  ImageDeserialize(ByteBuffer buffer) throws VirtualCardException {                                           // subclasses populate their working variables here.
         Log.d(TAG, "ImageDeserialize");
-        // ToDo: Deserialize the image here.
         try {
-            baCSS = VCard.DeserializeByteArray(buffer);
-            iTsn = buffer.getInt();
-            baAid = DeserializeByteArray(buffer);
-            mAuthDesKeyA = DeserializeByteArray(buffer);
-            mAuthDesKeyB = DeserializeByteArray(buffer);
-            mAuthPseudoKeyA = DeserializeByteArray(buffer);
-            mAuthPseudoKeyB = DeserializeByteArray(buffer);
-            baPseudoShell = DeserializeByteArray(buffer);
-            baUID = DeserializeByteArray(buffer);
-            baPseudoUID = DeserializeByteArray(buffer);
-            baCapabillities = DeserializeByteArray(buffer);
-            baAuthKasParams = DeserializeByteArray(buffer);
+            baCSS              = DeserializeByteArray(buffer);
+            iTsn               = buffer.getInt();
+            baAid              = DeserializeByteArray(buffer);
+            mAuthDesKeyA       = DeserializeByteArray(buffer);
+            mAuthDesKeyB       = DeserializeByteArray(buffer);
+            mAuthPseudoKeyA    = DeserializeByteArray(buffer);
+            mAuthPseudoKeyB    = DeserializeByteArray(buffer);
+            baPseudoShell      = DeserializeByteArray(buffer);
+            baUID              = DeserializeByteArray(buffer);
+            baPseudoUID        = DeserializeByteArray(buffer);
+            baCapabillities    = DeserializeByteArray(buffer);
+            baAuthKasParams    = DeserializeByteArray(buffer);
             for (Sector sector : aIpe) {
-                sector.baBody = DeserializeByteArray(buffer);
+                sector.baBody  = DeserializeByteArray(buffer);
             }
             for (Sector sector : aVrg) {
-                sector.baBody = DeserializeByteArray(buffer);
+                sector.baBody  = DeserializeByteArray(buffer);
             }
-            TTLog.baBody = DeserializeByteArray(buffer);
-            directory = new Directory(shell, DeserializeByteArray(buffer));
+            TTLog.baBody       = DeserializeByteArray(buffer);
+            directory          = new Directory(shell, DeserializeByteArray(buffer));
             for (Password password : aPassword) {
-                password.baBody = DeserializeByteArray(buffer);
+               password.baBody = DeserializeByteArray(buffer);
             }
 
-            if ((mAuthDesKeyA    != null)  && (mAuthDesKeyA.length    > 0)) { DesKeyA       = new SecretKeySpec(mAuthDesKeyA,    "DESede"); }
-            if ((mAuthDesKeyB    != null)  && (mAuthDesKeyB.length    > 0)) { DesKeyB       = new SecretKeySpec(mAuthDesKeyB,    "DESede"); }
-            if ((mAuthPseudoKeyA != null)  && (mAuthPseudoKeyA.length > 0)) { DesKeyPseudoA = new SecretKeySpec(mAuthPseudoKeyA, "DESede"); }
-            if ((mAuthPseudoKeyB != null)  && (mAuthPseudoKeyB.length > 0)) { DesKeyPseudoB = new SecretKeySpec(mAuthPseudoKeyB, "DESede"); }
-
+            if ((mAuthDesKeyA    != null)  && (mAuthDesKeyA.length    > 0)) { DesKeyA       = ConstructDesKey(mAuthDesKeyA); }
+            if ((mAuthDesKeyB    != null)  && (mAuthDesKeyB.length    > 0)) { DesKeyB       = ConstructDesKey(mAuthDesKeyB); }
+            if ((mAuthPseudoKeyA != null)  && (mAuthPseudoKeyA.length > 0)) { DesKeyPseudoA = ConstructDesKey(mAuthPseudoKeyA); }
+            if ((mAuthPseudoKeyB != null)  && (mAuthPseudoKeyB.length > 0)) { DesKeyPseudoB = ConstructDesKey(mAuthPseudoKeyB); }
         }
-        catch (VirtualCardException e) {
-            Log.d(TAG, "Corrupt Image file");
+        catch (VirtualCardException  e) {
+            Log.d(TAG, "ImageDeserialize: Corrupt Image file");
             throw e;
         }
     }
+
+
 
     // ========================================
     // ImageSerialize()
@@ -276,11 +316,11 @@ public class Cmd11 extends VCard {
         }
         // If we are successful the caller will erase the old image and then call SaveImage().
         //
+        if ((mAuthDesKeyA    != null)  && (mAuthDesKeyA.length    > 0)) { DesKeyA       = ConstructDesKey(mAuthDesKeyA); }
+        if ((mAuthDesKeyB    != null)  && (mAuthDesKeyB.length    > 0)) { DesKeyB       = ConstructDesKey(mAuthDesKeyB); }
+        if ((mAuthPseudoKeyA != null)  && (mAuthPseudoKeyA.length > 0)) { DesKeyPseudoA = ConstructDesKey(mAuthPseudoKeyA); }
+        if ((mAuthPseudoKeyB != null)  && (mAuthPseudoKeyB.length > 0)) { DesKeyPseudoB = ConstructDesKey(mAuthPseudoKeyB); }
 
-        if ((mAuthDesKeyA    != null)  && (mAuthDesKeyA.length    > 0)) { DesKeyA       = new SecretKeySpec(mAuthDesKeyA,    "DESede"); }
-        if ((mAuthDesKeyB    != null)  && (mAuthDesKeyB.length    > 0)) { DesKeyB       = new SecretKeySpec(mAuthDesKeyB,    "DESede"); }
-        if ((mAuthPseudoKeyA != null)  && (mAuthPseudoKeyA.length > 0)) { DesKeyPseudoA = new SecretKeySpec(mAuthPseudoKeyA, "DESede"); }
-        if ((mAuthPseudoKeyB != null)  && (mAuthPseudoKeyB.length > 0)) { DesKeyPseudoB = new SecretKeySpec(mAuthPseudoKeyB, "DESede"); }
     }
 
 
@@ -338,8 +378,9 @@ public class Cmd11 extends VCard {
         Arrays.fill(baChallengeTemp, (byte)0);
         fAuthenticated       = false;
         fPseudoAuthenticated = false;
-        sFciStart            = 0;
-        sFciA5LenOffset      = 0;
+        fUsingPseudoShellUID = (baPseudoShell != null && baPseudoShell.length > 0);                 // if we have a pseudo shell, we are "using it".
+        //sFciStart            = 0;
+        //sFciA5LenOffset      = 0;
         //sAllocated           = 0;
 
     }
@@ -359,8 +400,8 @@ public class Cmd11 extends VCard {
             return new byte[] { (byte)0x80, 1, 11};                                                 //
         }                                                                                           //
                                                                                                     //
-        if (baPseudoShell != null && baPseudoShell.length > 0) { return FciBuildRandom(); }         // Build FCI for random  UID host
-        else                                                   { return FciBuildStatic(); }         //               static  UID host
+        if (fUsingPseudoShellUID) { return FciBuildRandom(); }                                      // Build FCI for random  UID host
+        else                      { return FciBuildStatic(); }                                      //               static  UID host
     }                                                                                               //
 
 
@@ -414,7 +455,7 @@ public class Cmd11 extends VCard {
         byte[] baA5contents = new byte[iLen];                                                       //      create that much  space
         int iOffset = 0;                                                                            //
         for (byte[] baTt : tagList) {                                                               //      copy each tlv into this space
-            System.arraycopy(baTt, 0, baA5contents, iOffset, baTt.length);                   //
+            System.arraycopy(baTt, 0, baA5contents, iOffset, baTt.length);                          //
             iOffset += baTt.length;                                                                 //
         }                                                                                           //
         return baA5contents;                                                                        // return with a job done well!
@@ -428,24 +469,33 @@ public class Cmd11 extends VCard {
         baTlv[iOffset++] = bTag;                                                                    //      insert T
         if (baV.length > 127) { baTlv[iOffset++] = 1; }                                             //      insert L
         baTlv[iOffset++] = (byte)baV.length;                                                        //
-        System.arraycopy(baV, 0, baTlv, iOffset, baV.length);                                //      insert V
+        System.arraycopy(baV, 0, baTlv, iOffset, baV.length);                                       //      insert V
         return baTlv;                                                                               // return. job done.
     }
 
     private byte[] ConstructChallenge(SecretKey key) {                                              // *** ConstructChallenge
         Rng.nextBytes(baChallenge);                                                                 //  make random challenge
-                                                                                                    //
+        // ToDo: Debug code here.
+        //baChallenge[0] = (byte)0x61;                                                              //
+        //baChallenge[1] = (byte)0x62;                                                              //
+        //baChallenge[2] = (byte)0x63;                                                              //
+        //baChallenge[3] = (byte)0x64;                                                              //
+        //baChallenge[4] = (byte)0x65;                                                              //
+        //baChallenge[5] = (byte)0x66;                                                              //
+        //baChallenge[6] = (byte)0x67;                                                              //
+        //baChallenge[7] = (byte)0x68;                                                              //
+
         if (shell.getKsc() == 0x04) {                                                               // ? DESFire style
             try {                                                                                   //
-                Cip.init(Cipher.ENCRYPT_MODE, key);                                                 //      it needs to be encrypted
+                Cip.init(Cipher.ENCRYPT_MODE, key, NullIV);                                         //      it needs to be encrypted
                 baChallengeTemp = Cip.doFinal(baChallenge);                                         //
             } catch (Exception e) {                                                                 //
-                Log.e(TAG, "ConstructChallenge: Encryption failed: " + e.getMessage());        //       report problems.
-                System.arraycopy(baChallenge, 0, baChallengeTemp, 0, bCHAL_SIZE);    //
+                Log.e(TAG, "ConstructChallenge: Encryption failed: " + e.getMessage());             //       report problems.
+                System.arraycopy(baChallenge, 0, baChallengeTemp, 0, bCHAL_SIZE);                   //
             }                                                                                       //
         }                                                                                           //
         else {                                                                                      // ? CMD2 style
-            System.arraycopy(baChallenge, 0, baChallengeTemp, 0, bCHAL_SIZE);        //
+            System.arraycopy(baChallenge, 0, baChallengeTemp, 0, bCHAL_SIZE);                       //
         }                                                                                           //
                                                                                                     //
         return baChallengeTemp;                                                                     // That's all folks.
@@ -537,64 +587,306 @@ public class Cmd11 extends VCard {
     }
 
 
+    // ##########################################################################
+    // #  Function: DoAuthenticate
+    // #        Authenticate APDU manager.
+    // #
+    // #  Parameters:
+    // #        byte[] baApdu - The APDU sent by the PCD.
+    // #
+    // #  Returns:
+    // #        byte[] - This ICC's response including the Status word.
+    // #
+    // #  See Also:
+    // #
+    // ##########################################################################
     private byte[] DoAuthenticate(byte[] baApdu) {                                                  // *** DoAuthenticate
         // ToDo: Implement Authentication
-        return Response(SW.UNKNOWN);
+        //return Response(SW.UNKNOWN);
+
+        if (fAuthenticated) {												                        // Should not be permitted if we are already authenticated.
+            return Response(SW.SECURITY_STATUS_NOT_SATISFIED);										//      Not happy response
+        }																							//
+
+        if (baApdu[ISO7816.OFFSET_LC] != 16) {														// Auth expects 16 bytes from the ISAM.
+            return Response(SW.WRONG_LENGTH);														//      Not happy response
+        }																							//
+
+        byte[] baResponse;                                                                          // response to the challenge's response.
+        try {
+            if (shell.getKsc() == 0x03) {                                                           // CMD2 sytle authenticate.
+                if ((fUsingPseudoShellUID) && (!fPseudoAuthenticated)) {                            // PseudoShell used and not yet authenticated
+                    baResponse = GenSessionKey_Cmd2Style(baApdu, DesKeyPseudoA, DesKeyPseudoB);     // Authenticate (Exception on failure)
+                    fPseudoAuthenticated = true;                                                    // PseudoAuth state.
+                } else {                                                                            // Real Shell Auth
+                    baResponse = GenSessionKey_Cmd2Style(baApdu, DesKeyA, DesKeyB);                 // Authenticate (Exception on failure)
+                    fAuthenticated = true;                                                          // Auth state.
+                    Hash.reset();                                                                   // initialise Apdu Hash
+                }
+            }
+            else {                                                                                  //  Desfire style authentication
+                 if ((fUsingPseudoShellUID) && (!fPseudoAuthenticated)) {                           // PseudoShell used and not yet authenticated
+                    baResponse = GenSessionKey_Cmd7Style(baApdu, DesKeyPseudoA);                    // Authenticate (Exception on failure)
+                    fPseudoAuthenticated = true;                                                    // PseudoAuth state.
+                } else {                                                                            // Real Shell Auth
+                    baResponse = GenSessionKey_Cmd7Style(baApdu, DesKeyA);                          // Authenticate (Exception on failure)
+                    fAuthenticated = true;                                                          // Auth state.
+                    Hash.reset();                                                                   // initialise Apdu Hash
+                }
+            }
+        }
+        catch (AuthenticationException e) {                                                         // Session key crypto failures end here.
+            return Response(SW.SECURITY_STATUS_NOT_SATISFIED);                                      //      Not happy response
+        }                                                                                           //
+        catch (Exception e) {                                                                       // All other exceptions end here.
+            Log.d(TAG, "DoAuthenticate: " + e.getMessage());                                        //       Leave a clue about what went wrong!
+            return Response(SW.UNKNOWN);                                                            //
+        }
+
+        return Response(baResponse, SW.NO_ERROR);													// Exit Happy.
     }
 
+
+
+    private	byte[] GenSessionKey_Cmd2Style(byte[] baApdu, SecretKey KeyA, SecretKey KeyB) 	                    // Verify PCD's response to our challenge
+                                                                        throws AuthenticationException {        //      and generate our Response to their challenge
+        try {                                                                                                   //
+            Cip.init(Cipher.ENCRYPT_MODE, KeyA, NullIV);                                                        // Encrypt our challenge data
+            byte[] baChallengeTemp = Cip.doFinal(baChallenge);                                                  //
+                                                                                                                //
+            if ( ! BytesMatch(baApdu, ISO7816.OFFSET_CDATA, baChallengeTemp, 0, bCHAL_SIZE))    {               // Compare with offered data (time invariance does not matter, its RND and unrepeatable)
+                throw new AuthenticationException();                                                            // 		Exit Mr Grumpy.
+            }                                                                                                   //
+                                                                                                                //
+            // Note: We only encrypt their data if they got ours right!											//
+            Cip.init(Cipher.ENCRYPT_MODE, KeyB, NullIV);                                                        // POST's challenge
+            byte[] baResponse = Cip.doFinal(baApdu, (short) (ISO7816.OFFSET_CDATA + bCHAL_SIZE), bCHAL_SIZE);   // Calculate our reply @0 <= Response data to caller
+                                                                                                                //
+            byte[] baSessionSeed = new byte[16];                                                                // Build the session key seed data
+            System.arraycopy(baChallenge,                    4, baSessionSeed,  0, 4);    //      c4c5c6c7
+            System.arraycopy(baApdu,      (ISO7816.OFFSET_CDATA + 12), baSessionSeed,  4, 4);    //              r1r2r3r4
+            System.arraycopy(baChallenge,                    0, baSessionSeed,  8, 4);    //                      c1c2c3c4
+            System.arraycopy(baApdu,      (ISO7816.OFFSET_CDATA +  8), baSessionSeed, 12, 4);    //                              r4r5r6r7
+                                                                                                                //
+            Cip.init(Cipher.ENCRYPT_MODE, KeyB, NullIV);                                                        //
+            byte[] baSessionKey = Cip.doFinal(baSessionSeed);                                                   //      SK material = enc(Seed)
+            SessionKey = new SecretKeySpec(baSessionKey,    "DESede");                                          //      create the SK
+            Arrays.fill(baSessionKey, (byte)0);                                                                 // scrub the key material from the buffer before garbage collector sees it.
+                                                                                                                //
+            return baResponse;                                                                                  //
+        }                                                                                                       //
+        catch (AuthenticationException e) { throw e; }                                                          // Catch and re throw our crypto failures
+        catch (Exception e) {                                                                                   // all crypto exceptions land here.
+            Log.d(TAG, "GenSessionKey_Cmd2Style: " + e.getMessage());                                           //       Leave a clue about what went wrong!
+            throw new AuthenticationException();                                                                //      but then throw a crypto cock-up exception.
+        }                                                                                                       //
+    }                                                                                                           //
+
+    private	byte[] GenSessionKey_Cmd7Style(byte[] baApdu, SecretKey Key) throws AuthenticationException {       // Verify PCD's response to our challenge
+                                                                                                                //      and generate our Response to their challenge
+        try {                                                                                                   //
+            short sByteCount = (short)0;
+            Cip.init(Cipher.ENCRYPT_MODE, Key, NullIV);
+            byte[] baRndA = Cip.doFinal(baApdu, ISO7816.OFFSET_CDATA, bCHAL_SIZE);                              // encrypt the PCD's response. Expecting [RndA :: Rot(RndB)]
+
+            Cip.init(Cipher.ENCRYPT_MODE, Key, NullIV);
+            byte[] baRotRnd = Cip.doFinal(baApdu, ISO7816.OFFSET_CDATA+8, bCHAL_SIZE);
+
+            for (int i = 0; i < bCHAL_SIZE; i++) {                                                              // DESFires CBC is weird.
+                baRotRnd[i] ^= baApdu[ISO7816.OFFSET_CDATA + i];                                                          //
+            }                                                                                                   //
+
+            if (! BytesMatch(baRotRnd, 0, baChallenge, 1, bCHAL_SIZE-1)) {                                      // 7 out of 8 is good enough!
+                throw new AuthenticationException();                                                            // 		Exit Mr Grumpy.
+            }                                                                                                   //
+
+            byte[] baSessionKey = new byte[16];                                                                 // Build the session key seed data
+            System.arraycopy(baRndA,        0, baSessionKey,  0, 4);                                            //      a[7-4]
+            System.arraycopy(baChallenge,   0, baSessionKey,  4, 4);                                            //            b[7-4]
+            System.arraycopy(baRndA,        4, baSessionKey,  8, 4);                                            //                  a[3-0]
+            System.arraycopy(baChallenge,   4, baSessionKey, 12, 4);                                            //                        b[3-0]
+            SessionKey =  ConstructDesKey(baSessionKey);                                                        // create the SK
+            Arrays.fill(baSessionKey, (byte)0);                                                                 // scrub the key material from the buffer before garbage collector sees it.
+
+            baRotRnd[7] = baRndA[0];																	        // Rotate their RND
+            System.arraycopy(baRndA, (short)1, baRotRnd, (short)0, (short)7);                                   //
+            Cip.init(Cipher.ENCRYPT_MODE, Key, NullIV);                                                         //
+            return Cip.doFinal(baRotRnd, 0, bCHAL_SIZE);                                                        // Response = encrypted PCD's rotated RndA
+
+        }                                                                                                       //
+        catch (AuthenticationException e) { throw e; }                                                          // Catch and re throw our crypto failures
+        catch (Exception e) {                                                                                   // all crypto exceptions land here.
+            Log.d(TAG, "GenSessionKey_Cmd2Style: " + e.getMessage());                                           //       Leave a clue about what went wrong!
+            throw new AuthenticationException();                                                                //      but then throw a crypto cock-up exception.
+        }                                                                                                       //
+    }                                                                                                           //
+
+    // ##########################################################################
+    // #  Function: DoReadIpe
+    // #        Read IPE APDU manager.
+    // #
+    // #  Parameters:
+    // #        byte[] baApdu - The APDU sent by the PCD.
+    // #
+    // #  Returns:
+    // #        byte[] - This ICC's response including the Status word.
+    // #
+    // #  See Also:
+    // #
+    // ##########################################################################
     private byte[] DoReadIpe(byte[] baApdu) {                                                       // *** DoReadIpe
         // ToDo: Implement DoReadIpe
         return Response(SW.UNKNOWN);
     }
 
+    // ##########################################################################
+    // #  Function: DoReadVrg
+    // #        Read VRG  APDU manager.
+    // #
+    // #  Parameters:
+    // #        byte[] baApdu - The APDU sent by the PCD.
+    // #
+    // #  Returns:
+    // #        byte[] - This ICC's response including the Status word.
+    // #
+    // #  See Also:
+    // #
+    // ##########################################################################
     private byte[] DoReadVrg(byte[] baApdu) {                                                       // *** DoReadVrg
         // ToDo: Implement DoReadVrg
         return Response(SW.UNKNOWN);
     }
 
+    // ##########################################################################
+    // #  Function: DoReadLog
+    // #        Read TT-Log APDU manager.
+    // #
+    // #  Parameters:
+    // #        byte[] baApdu - The APDU sent by the PCD.
+    // #
+    // #  Returns:
+    // #        byte[] - This ICC's response including the Status word.
+    // #
+    // #  See Also:
+    // #
+    // ##########################################################################
     private byte[] DoReadLog(byte[] baApdu) {                                                       // *** DoReadLog
         // ToDo: Implement DoReadLog
         return Response(SW.UNKNOWN);
     }
 
+    // ##########################################################################
+    // #  Function: DoReselect
+    // #        Reselection  APDU manager.
+    // #
+    // #  Parameters:
+    // #        byte[] baApdu - The APDU sent by the PCD.
+    // #
+    // #  Returns:
+    // #        byte[] - This ICC's response including the Status word.
+    // #
+    // #  See Also:
+    // #
+    // ##########################################################################
     private byte[] DoReselect(byte[] baApdu) {                                                      // *** DoReselect
         // ToDo: Implement DoReselect
         return Response(SW.UNKNOWN);
     }
 
 
+    // ##########################################################################
+    // #  Function: DoUpdateIpe
+    // #        IPE write APDU manager.
+    // #
+    // #  Parameters:
+    // #        byte[] baApdu - The APDU sent by the PCD.
+    // #
+    // #  Returns:
+    // #        byte[] - This ICC's response including the Status word.
+    // #
+    // #  See Also:
+    // #
+    // ##########################################################################
     private byte[] DoUpdateIpe(byte[] baApdu) {                                                     // *** DoUpdateIpe
         // ToDo: Implement DoUpdateIpe
         return Response(SW.UNKNOWN);
     }
 
 
+    // ##########################################################################
+    // #  Function: DoUpdateVrg
+    // #        VRG Write APDU manager.
+    // #
+    // #  Parameters:
+    // #        byte[] baApdu - The APDU sent by the PCD.
+    // #
+    // #  Returns:
+    // #        byte[] - This ICC's response including the Status word.
+    // #
+    // #  See Also:
+    // #
+    // ##########################################################################
     private byte[] DoUpdateVrg(byte[] baApdu) {                                                     // *** DoUpdateVrg
         // ToDo: Implement DoUpdateVrg
         return Response(SW.UNKNOWN);
     }
 
 
+    // ##########################################################################
+    // #  Function: DoUpdateLog
+    // #        TT-Log Write APDU manager.
+    // #
+    // #  Parameters:
+    // #        byte[] baApdu - The APDU sent by the PCD.
+    // #
+    // #  Returns:
+    // #        byte[] - This ICC's response including the Status word.
+    // #
+    // #  See Also:
+    // #
+    // ##########################################################################
     private byte[] DoUpdateLog(byte[] baApdu) {                                                     // *** DoUpdateLog
         // ToDo: Implement DoUpdateLog
         return Response(SW.UNKNOWN);
     }
 
 
+    // ##########################################################################
+    // #  Function: DoUpdateDir
+    // #        Directory Write APDU manager.
+    // #
+    // #  Parameters:
+    // #        byte[] baApdu - The APDU sent by the PCD.
+    // #
+    // #  Returns:
+    // #        byte[] - This ICC's response including the Status word.
+    // #
+    // #  See Also:
+    // #
+    // ##########################################################################
     private byte[] DoUpdateDir(byte[] baApdu) {                                                     // *** DoUpdateDir
         // ToDo: Implement DoUpdateDir
         return Response(SW.UNKNOWN);
     }
 
 
+    // ##########################################################################
+    // #  Function: DoEndSession
+    // #        Commit changes and session end APDU manager.
+    // #
+    // #  Parameters:
+    // #        byte[] baApdu - The APDU sent by the PCD.
+    // #
+    // #  Returns:
+    // #        byte[] - This ICC's response including the Status word.
+    // #
+    // #  See Also:
+    // #
+    // ##########################################################################
     private byte[] DoEndSession(byte[] baApdu) {                                                    // *** DoEndSession
         // ToDo: Implement DoEndSession
         return Response(SW.UNKNOWN);
     }
-
-
-
-
 
 // ==========================================================================================
 // Because a phone keeps this in RAM and writes it to the file at the same time as the sectors
