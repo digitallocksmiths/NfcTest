@@ -90,14 +90,12 @@ public class Cmd0 extends VCard {
 
     // ========================================
     // Select()
-    //      Construct and return the FCI Tag
-    //      A5's V/contents. TagA5 & Len will
-    //      get added by the caller.
+    //      Construct and return the FCI
     // ========================================
-    public byte[] Select() {                                                                        // Card select
-        Log.d(TAG, "Select");                                                                       // Build FCI.A5's contents
-        // ToDo: Build the FCI A5 contents here.
-        return new byte[] { (byte)0x80, 1, 0,  (byte)0x82, 1, 0};
+    public byte[] Select(byte[] baAid) {                                                            // Card select
+        Log.d(TAG, "Select");                                                                       // Build FCI
+        // ToDo: Build the FCI here.
+        return WrapAsFci(baAid, new byte[] { (byte)0xA5, 0x06, (byte)0x80, 1, 0, (byte)0x82, 1, 0});
     }
 
     // ========================================

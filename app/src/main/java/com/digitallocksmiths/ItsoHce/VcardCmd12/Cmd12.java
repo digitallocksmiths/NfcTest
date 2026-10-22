@@ -82,13 +82,12 @@ public class Cmd12 extends VCard {
 
     // ========================================
     // Select()
-    //      construct and return the FCI
+    //      Construct and return the FCI
     // ========================================
-    public byte[] Select() {                                                                        // Card select
-        Log.d(TAG, "Select");                                                                       // Build FCI.A5's contents
-        // ToDo: Build the FCI A5 contents here.
-        return new byte[] { (byte)0x80, 1, 12};
-
+    public byte[] Select(byte[] baAid) {                                                            // Card select
+        Log.d(TAG, "Select");                                                                       // Build FCI
+        // ToDo: Build the FCI here.
+        return WrapAsFci(baAid, new byte[] { (byte)0xA5, 0x03, (byte)0x80, 1, 12});
     }
 
     // ========================================

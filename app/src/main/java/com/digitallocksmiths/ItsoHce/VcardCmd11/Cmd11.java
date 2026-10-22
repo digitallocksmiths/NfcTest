@@ -357,9 +357,9 @@ public class Cmd11 extends VCard {
     // =============================================================================================    Select (abstract implementation)
     // ========================================
     // Select()
-    //      construct and return the FCI.A5's contents
+    //      construct and return the FCI
     // ========================================
-    public byte[] Select() {                                                                        // *** Card select
+    public byte[] Select(byte[] baAid) {                                                            // *** Card select
         Log.d(TAG, "Select");                                                                       //
         try {                                                                                       //
             Reset();                                                                                // Clear on reset//select variables initialized.
@@ -369,8 +369,8 @@ public class Cmd11 extends VCard {
             return new byte[] { (byte)0x80, 1, 11};                                                 //
         }                                                                                           //
                                                                                                     //
-        if (fUsingPseudoShellUID) { return FciBuildRandom(); }                                      // Build FCI for random  UID host
-        else                      { return FciBuildStatic(); }                                      //               static  UID host
+        if (fUsingPseudoShellUID) { return WrapAsFci(baAid, FciBuildRandom()); }                    // Build FCI for random  UID host
+        else                      { return WrapAsFci(baAid, FciBuildStatic()); }                    //               static  UID host
     }                                                                                               //
 
 
@@ -392,9 +392,9 @@ public class Cmd11 extends VCard {
         tagList.add(TlvBuild(bTagOidList,      ConstructOids()));
         tagList.add(TlvBuild(bTagCss,          baCSS));
         tagList.add(TlvBuild(bTagChallenge,    ConstructChallenge(DesKeyA)));
-        tagList.add(TlvBuild(bTagStaticUid,    baUID));                                    // non standard...
+        tagList.add(TlvBuild(bTagStaticUid,    baUID));                                             // non standard...
         tagList.add(TlvBuild(bTagAuth,         baAuthKasParams));
-        return TlvList(tagList);
+        return TlvBuild((byte)0xA5, tagList);
     }
 
     private byte[] FciBuildRandom() {                                                               // *** Random UID FCI
@@ -405,7 +405,7 @@ public class Cmd11 extends VCard {
         tagList.add(TlvBuild(bTagChallenge,    ConstructChallenge(DesKeyPseudoA)));
         tagList.add(TlvBuild(bTagPseudoUid,    baPseudoUID));
         tagList.add(TlvBuild(bTagAuth,         baAuthKasParams));
-        return TlvList(tagList);
+        return TlvBuild((byte)0xA5, tagList);
     }
 
     private byte[] FciBuildReselect() {                                                             // *** Reselection FCI
@@ -416,7 +416,7 @@ public class Cmd11 extends VCard {
         tagList.add(TlvBuild(bTagChallenge,    ConstructChallenge(DesKeyA)));
         tagList.add(TlvBuild(bTagStaticUid,    baUID));
         tagList.add(TlvBuild(bTagAuth,         baAuthKasParams));
-        return TlvList(tagList);
+        return TlvBuild((byte)0xA5, tagList);
     }
 
 
@@ -740,7 +740,7 @@ public class Cmd11 extends VCard {
         byte[] baA5Material;
         if (fUsingPseudoShellUID && !fPseudoAuthenticated) { baA5Material = FciBuildRandom();   }   // if pseudo shell and not pseudo authenticated, reissue the Random UID FCI
         else                                               { baA5Material = FciBuildReselect(); }   // else real shell or pseudo authenticated OK
-        return Response( WrapFci(null, baA5Material), SW.NO_ERROR);                                 //
+        return Response( WrapAsFci(null, baA5Material), SW.NO_ERROR);                                 //
     }
 
 

@@ -264,7 +264,7 @@ public abstract class VCard {
     protected abstract void     JsonParse(JSONObject jsonCardImage)  throws JSONException, VirtualCardException; // parse the JSON image into the CM Image
     protected abstract void     JsonExport(JSONObject jsonCardImage) throws JSONException;          // Make a Json String of the CM Image
     protected abstract void     Reset()                              throws VirtualCardException;   // Called on Reset.
-    protected abstract byte[]   Select();                                                           // build the FCI's A5 contents.
+    protected abstract byte[]   Select(byte[] baAid);                                               // build the FCI's A5 TLV.
     protected abstract byte[]   Dispatch(byte[] baApdu);                                            // Process the incoming APDU
 
 
@@ -581,7 +581,7 @@ public abstract class VCard {
         else                   { baTlv = new byte[2 + 1 + baV.length]; }                            //        length < 128 is just a simple length
         int iOffset = 0;                                                                            //        Note: Max length catered for here is 255!
         baTlv[iOffset++] = bTag;                                                                    //      insert T
-        if (baV.length > 127) { baTlv[iOffset++] = 1; }                                             //      insert L
+        if (baV.length > 127) { baTlv[iOffset++] = (byte)0x81; }                                    //      insert L
         baTlv[iOffset++] = (byte)baV.length;                                                        //
         System.arraycopy(baV, 0, baTlv, iOffset, baV.length);                                       //      insert V
         return baTlv;                                                                               // return. job done.
@@ -604,32 +604,27 @@ public abstract class VCard {
     }                                                                                               //
 
 
-    protected byte[] WrapFci(byte[] baAid, byte[] baA5Body) {
-        boolean fA5_Long = (baA5Body.length > 127);
+    protected byte[] WrapAsFci(byte[] baAid, byte[] baTlvA5) {                                      // build 6F <len> opt<aid> <a5>
+
         boolean f6F_Long;
-        if (baAid != null) {  f6F_Long = (( (2 + baAid.length) + (((fA5_Long) ? 3 : 2) + baA5Body.length)) > 127); }
-        else               {  f6F_Long = ((                      (((fA5_Long) ? 3 : 2) + baA5Body.length)) > 127); }
+        if (baAid != null) {  f6F_Long = ( (2 + baAid.length + baTlvA5.length) > 127); }            // assumes AID len < 127.
+        else               {  f6F_Long = (                     baTlvA5.length  > 127); }            // no AID here
 
-        byte[] baFci = new byte[((f6F_Long) ? 3:2) +
-                ((baAid != null) ? (2 + baAid.length) : 0 ) +
-                ((fA5_Long)?3:2)   +
-                baA5Body.length];
+        byte[] baFci = new byte[((f6F_Long) ? 3:2) +                                                // size of the whole
+                                ((baAid != null) ? (2 + baAid.length) : 0 ) +                       //
+                                baTlvA5.length];                                                    //
 
-        int iOffset=0;
-        baFci[iOffset++] = 0x6F;                                                            // 6F : FCI tag
-        if (f6F_Long) { baFci[iOffset++] = (byte)0x81; }                                    //    len opt
-        baFci[iOffset++] = (byte)(baFci.length-iOffset);                                    //    len
-        if (baAid != null) {
-            baFci[iOffset++] = (byte) 0x84;                                                 //        84 : tag
-            baFci[iOffset++] = (byte) baAid.length;                                         //           len
-            arraycopy(baAid, 0, baFci, iOffset, baAid.length);                              //           body
-            iOffset += baAid.length;                                                        //
+        int iOffset=0;                                                                              // Start filling it...
+        baFci[iOffset++] = 0x6F;                                                                    // 6F : FCI tag
+        if (f6F_Long) { baFci[iOffset++] = (byte)0x81; }                                            //    optional extended len
+        baFci[iOffset++] = (byte)(baFci.length-iOffset);                                            //    len
+        if (baAid != null) {                                                                        //    optional AID
+            baFci[iOffset++] = (byte) 0x84;                                                         //        84 : tag
+            baFci[iOffset++] = (byte) baAid.length;                                                 //           len
+            arraycopy(baAid, 0, baFci, iOffset, baAid.length);                                      //           body
+            iOffset += baAid.length;                                                                //
         }
-        baFci[iOffset++] = (byte)0xa5;                                                      //        A5 : tag
-        if (fA5_Long) { baFci[iOffset++] = (byte) 0x81; }                                   //           len opt
-        baFci[iOffset++] = (byte)baA5Body.length;                                           //           len
-        arraycopy(baA5Body, 0, baFci, iOffset, baA5Body.length);                            //           body
-        iOffset += baA5Body.length;                                                         //
+        arraycopy(baTlvA5, 0, baFci, iOffset, baTlvA5.length);                                      //         A5: T, L, & V
         return baFci;
     }
 

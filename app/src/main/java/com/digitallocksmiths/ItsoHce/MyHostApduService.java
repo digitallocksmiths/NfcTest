@@ -72,31 +72,8 @@ public class MyHostApduService extends HostApduService {
             commandApdu[2] == (byte) 0x04 &&
             commandApdu[3] == (byte) 0x00)    {
                 Log.d(TAG, "SELECT AID detected");
-                byte[] baAid    = Arrays.copyOfRange(commandApdu, 5, 5 + commandApdu[4]);           // 84 : AID
-                byte[] baA5Body = vcard.Select();                                                   // A5 : Propitiatory
-
-                boolean fA5_Long = (baA5Body.length > 127);
-                boolean f6F_Long = ((2 + baAid.length + ((fA5_Long)?3:2) + baA5Body.length) > 127);
-
-                byte[] baFci     = new byte[((f6F_Long) ? 3:2) +
-                                            (2 + baAid.length) +
-                                            ((fA5_Long)?3:2)   +
-                                             baA5Body.length];
-
-                int iOffset=0;
-                baFci[iOffset++] = 0x6F;                                                            // 6F : FCI tag
-                if (f6F_Long) { baFci[iOffset++] = (byte)0x81; }                                    //    len opt
-                baFci[iOffset++] = (byte)(baFci.length-iOffset);                                    //    len
-                baFci[iOffset++] = (byte)0x84;                                                      //        84 : tag
-                baFci[iOffset++] = (byte)baAid.length;                                              //           len
-                arraycopy(baAid, 0, baFci, iOffset, baAid.length);                                  //           body
-                iOffset += baAid.length;                                                            //
-                baFci[iOffset++] = (byte)0xa5;                                                      //        A5 : tag
-                if (fA5_Long) { baFci[iOffset++] = (byte) 0x81; }                                   //           len opt
-                baFci[iOffset++] = (byte)baA5Body.length;                                           //           len
-                arraycopy(baA5Body, 0, baFci, iOffset, baA5Body.length);                            //           body
-                iOffset += baA5Body.length;                                                         //
-
+                byte[] baAid    = Arrays.copyOfRange(commandApdu, 5, 5 + commandApdu[4]);           // Get the AID we answered to
+                byte[] baFci    = vcard.Select(baAid);                                              // Do the selection and get the FCI in response.
                 return VCard.Response(baFci, VCard.SW.NO_ERROR);                                    // return it with the happy message.
         }
 
