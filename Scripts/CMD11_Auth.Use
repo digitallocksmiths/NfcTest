@@ -1,0 +1,100 @@
+// !TestName: CMD11_Auth
+//
+//  Test Description here
+//  more...
+//
+//  End of comments marks the end of this description.
+//
+
+    @ResetA.cold;  // Card
+    @ResetB.cold;  // Isam
+
+
+var UID = @UidA;
+
+var Resp;
+
+@PrintLn("Isam Password");
+Resp = @ApduB(90 18 00 00  10  4000000000000000000000000000012F);
+@Test(@Last(Resp,2) == 9000, "Isam password OK?");
+
+@PrintLn("Media Select");
+var Aid    = F0010203040506;
+var Select = 00A40400 @Length(Aid) Aid;
+var Fci    = @ApduA(Select);
+@Test(@Last(Resp,2) == 9000, "Select OK?");
+
+@PrintLn("Parsing the FCI");          @Debug(Fci);    
+var Body_6F      = @Tlv(6F, Fci);        @Debug(Body_6F);
+var Body_A5      = @Tlv(A5, Body_6F);    @Debug(Body_A5);
+var Shell        = @Tlv(C0, Body_A5);    @Debug(Shell);
+var Capabilities = @Tlv(C1, Body_A5);    @Debug(Capabilities);
+var Directory    = @Tlv(C2, Body_A5);    @Debug(Directory);
+var OidList      = @Tlv(C3, Body_A5);    @Debug(OidList);
+var OldCSS       = @Tlv(C3, Body_A5);    @Debug(OldCSS);
+var Challenge    = @Tlv(C5, Body_A5);    @Debug(Challenge);
+var PseudoUid    = @Tlv(C6, Body_A5);    @Debug(PseudoUid);
+var StaticUid    = @Tlv(C7, Body_A5);    @Debug(StaticUid);
+var Kas1Kas2     = @Tlv(C8, Body_A5);    @Debug(Kas1Kas2);
+
+
+if (@Length(PseudoUid) != 0) {                                            // Did we get a PseudoUID?
+
+    @PrintLn("Isam Begin (Pseudo UID");
+    var Begin_Body = 2A85 Shell PseudoUid Challenge;
+    var Begin      = 90 48 00 @Left(Kas1Kas2,1) @Length(Begin_Body) Begin_Body  00;
+    var Isam_Chal  = @ApduB(Begin);
+    @Test(@Last(Isam_Chal,2) == 9000, "Begin OK?");
+
+    @PrintLn("Media Authenticate (pseudo)");
+    var Auth       = 90 10 00 00 (@Length(Isam_Chal)-2)  @First(Isam_Chal, @Length(Isam_Chal)-2)  00;
+    var Media_Resp = @ApduA(Auth);
+    @Test(@Last(Media_Resp,2) == 9000, "Authenticate OK?");
+
+    @PrintLn("Isam External Authenticate (pseudo)");
+    var ExtAuth      = 00 82 00 @Right(Kas1Kas2,1) (@Length(Media_Resp)-2) @First(Media_Resp, @Length(Media_Resp)-2);
+    var ExtAuth_Resp = @ApduB(ExtAuth);
+    @Test(@Last(ExtAuth_Resp,2) == 9000, "External Authenticate OK?");
+
+    @PrintLn("Media Reselect");
+    var Reselect_Resp = @ApduA(90 22 00 00 00);
+    @Test(@Last(Reselect_Resp,2) == 9000, "Reselect OK?");
+
+    @PrintLn("Parsing the reselect FCI");   @Debug(Reselect_Resp ); 
+    Body_6F      = @Tlv(6F, Reselect_Resp); @Debug(Body_6F);
+    Body_A5      = @Tlv(A5, Body_6F);       @Debug(Body_A5);
+    Shell        = @Tlv(C0, Body_A5);       @Debug(Shell);
+    Directory    = @Tlv(C2, Body_A5);       @Debug(Directory);
+    OidList      = @Tlv(C3, Body_A5);       @Debug(OidList);
+    Challenge    = @Tlv(C5, Body_A5);       @Debug(Challenge);
+    StaticUid    = @Tlv(C7, Body_A5);       @Debug(StaticUid);
+    Kas1Kas2     = @Tlv(C8, Body_A5);       @Debug(Kas1Kas2);
+
+    @PrintLn("Isam End (pseudo session)");
+    var End_Resp = @ApduB(90 58 00 00 00);
+    @Test(@Last(End_Resp ,2) == 9000, "End OK?");
+
+
+
+}
+
+
+@PrintLn("Isam Begin - true UID & Shell");
+var Begin_Body = 2A85 Shell StaticUid Challenge;
+var Begin      = 90 48 00 @Left(Kas1Kas2,1) @Length(Begin_Body) Begin_Body  00;
+var Isam_Chal  = @ApduB(Begin);
+@Test(@Last(Isam_Chal,2) == 9000, "Begin OK?");
+
+@PrintLn("Media Authenticate");
+var Auth       = 90 10 00 00 (@Length(Isam_Chal)-2)  @First(Isam_Chal, @Length(Isam_Chal)-2)  00;
+var Media_Resp = @ApduA(Auth);
+@Test(@Last(Media_Resp,2) == 9000, "Authenticate OK?");
+
+@PrintLn("Isam External Authenticate");
+var ExtAuth      = 00 82 00 @Right(Kas1Kas2,1) (@Length(Media_Resp)-2) @First(Media_Resp, @Length(Media_Resp)-2);
+var ExtAuth_Resp = @ApduB(ExtAuth);
+@Test(@Last(ExtAuth_Resp,2) == 9000, "External Authenticate OK?");
+
+
+
+@Debug;

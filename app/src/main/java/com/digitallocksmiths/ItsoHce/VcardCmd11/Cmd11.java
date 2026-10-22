@@ -20,7 +20,6 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.nio.ByteBuffer;
-import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.MessageDigest;
@@ -30,8 +29,6 @@ import java.util.Arrays;
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.NoSuchPaddingException;
-import javax.crypto.SecretKeyFactory;
-import javax.crypto.spec.DESedeKeySpec;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -101,34 +98,6 @@ public class Cmd11 extends VCard {
     private final MessageDigest   Hash;                                                             // session MAC generator
     private final IvParameterSpec NullIV = new IvParameterSpec(new byte[8]);                        // IV = 0.0.0.0.0.0.0.0
 
-    SecretKey ConstructDesKey(byte[] baKeyMaterial) {
-        byte[] baFullSizeKey;
-
-        switch (baKeyMaterial.length) {
-            case 24:    baFullSizeKey = baKeyMaterial;
-                        break;
-            case 16:    baFullSizeKey = new byte[24];
-                        System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 0, 16);
-                        System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 16, 8);
-                        break;
-            case 8:     baFullSizeKey = new byte[24];
-                        System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 0, 8);
-                        System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 8, 8);
-                        System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 16, 8);
-                        break;
-            default:    return null;
-        }
-
-        try {
-            DESedeKeySpec keySpec = new DESedeKeySpec(baFullSizeKey);
-            SecretKeyFactory mySecretKeyFactory = SecretKeyFactory.getInstance("DESede");
-            return mySecretKeyFactory.generateSecret(keySpec);
-        }
-        catch (Exception e) {
-            Log.e(TAG, "MakeKey: " + e.getMessage());
-            return null;
-        }
-    }
 
 
 //  public static Checksum      Crc;                                                                //        CRC resource.
@@ -391,12 +360,12 @@ public class Cmd11 extends VCard {
     //      construct and return the FCI.A5's contents
     // ========================================
     public byte[] Select() {                                                                        // *** Card select
-        Log.d(TAG, "Select");                                                                  //
+        Log.d(TAG, "Select");                                                                       //
         try {                                                                                       //
             Reset();                                                                                // Clear on reset//select variables initialized.
         }                                                                                           //
         catch (VirtualCardException e) {                                                            //
-            Log.d(TAG, "Select: + " + e.getMessage() );                                        // report trouble if needed
+            Log.d(TAG, "Select: + " + e.getMessage() );                                             // report trouble if needed
             return new byte[] { (byte)0x80, 1, 11};                                                 //
         }                                                                                           //
                                                                                                     //
@@ -417,61 +386,40 @@ public class Cmd11 extends VCard {
 
     private byte[] FciBuildStatic() {                                                               // *** Static UID FCI
         ArrayList<byte[]> tagList = new ArrayList<>();
-        tagList.add(TlvBuildPrimitive(bTagShell,        baShell));
-        tagList.add(TlvBuildPrimitive(bTagCapabilities, baCapabillities));
-        tagList.add(TlvBuildPrimitive(bTagDirectory,    directory.Get()));
-        tagList.add(TlvBuildPrimitive(bTagOidList,      ConstructOids()));
-        tagList.add(TlvBuildPrimitive(bTagCss,          baCSS));
-        tagList.add(TlvBuildPrimitive(bTagChallenge,    ConstructChallenge(DesKeyA)));
-        tagList.add(TlvBuildPrimitive(bTagAuth,         baAuthKasParams));
-        return FciBuild(tagList);
+        tagList.add(TlvBuild(bTagShell,        baShell));
+        tagList.add(TlvBuild(bTagCapabilities, baCapabillities));
+        tagList.add(TlvBuild(bTagDirectory,    directory.Get()));
+        tagList.add(TlvBuild(bTagOidList,      ConstructOids()));
+        tagList.add(TlvBuild(bTagCss,          baCSS));
+        tagList.add(TlvBuild(bTagChallenge,    ConstructChallenge(DesKeyA)));
+        tagList.add(TlvBuild(bTagStaticUid,    baUID));                                    // non standard...
+        tagList.add(TlvBuild(bTagAuth,         baAuthKasParams));
+        return TlvList(tagList);
     }
 
     private byte[] FciBuildRandom() {                                                               // *** Random UID FCI
         ArrayList<byte[]> tagList = new ArrayList<>();
-        tagList.add(TlvBuildPrimitive(bTagShell,        baPseudoShell));
-        tagList.add(TlvBuildPrimitive(bTagCapabilities, baCapabillities));
-        tagList.add(TlvBuildPrimitive(bTagCss,          baCSS));
-        tagList.add(TlvBuildPrimitive(bTagChallenge,    ConstructChallenge(DesKeyPseudoA)));
-        tagList.add(TlvBuildPrimitive(bTagPseudoUid,    baPseudoUID));
-        tagList.add(TlvBuildPrimitive(bTagAuth,         baAuthKasParams));
-        return FciBuild(tagList);
+        tagList.add(TlvBuild(bTagShell,        baPseudoShell));
+        tagList.add(TlvBuild(bTagCapabilities, baCapabillities));
+        tagList.add(TlvBuild(bTagCss,          baCSS));
+        tagList.add(TlvBuild(bTagChallenge,    ConstructChallenge(DesKeyPseudoA)));
+        tagList.add(TlvBuild(bTagPseudoUid,    baPseudoUID));
+        tagList.add(TlvBuild(bTagAuth,         baAuthKasParams));
+        return TlvList(tagList);
     }
 
     private byte[] FciBuildReselect() {                                                             // *** Reselection FCI
         ArrayList<byte[]> tagList = new ArrayList<>();
-        tagList.add(TlvBuildPrimitive(bTagShell,        baShell));
-        tagList.add(TlvBuildPrimitive(bTagDirectory,    directory.Get()));
-        tagList.add(TlvBuildPrimitive(bTagOidList,      ConstructOids()));
-        tagList.add(TlvBuildPrimitive(bTagChallenge,    ConstructChallenge(DesKeyA)));
-        tagList.add(TlvBuildPrimitive(bTagStaticUid,    baUID));
-        tagList.add(TlvBuildPrimitive(bTagAuth,         baAuthKasParams));
-        return FciBuild(tagList);
+        tagList.add(TlvBuild(bTagShell,        baShell));
+        tagList.add(TlvBuild(bTagDirectory,    directory.Get()));
+        tagList.add(TlvBuild(bTagOidList,      ConstructOids()));
+        tagList.add(TlvBuild(bTagChallenge,    ConstructChallenge(DesKeyA)));
+        tagList.add(TlvBuild(bTagStaticUid,    baUID));
+        tagList.add(TlvBuild(bTagAuth,         baAuthKasParams));
+        return TlvList(tagList);
     }
 
-    private byte[] FciBuild(ArrayList<byte[]> tagList) {                                            // *** FciBuild
-        int iLen = 0;                                                                               //      TLV element list into byte[]
-        for (byte[] baTt : tagList) { iLen += baTt.length; }                                        //      calculate space to return all
-        byte[] baA5contents = new byte[iLen];                                                       //      create that much  space
-        int iOffset = 0;                                                                            //
-        for (byte[] baTt : tagList) {                                                               //      copy each tlv into this space
-            System.arraycopy(baTt, 0, baA5contents, iOffset, baTt.length);                          //
-            iOffset += baTt.length;                                                                 //
-        }                                                                                           //
-        return baA5contents;                                                                        // return with a job done well!
-    }                                                                                               //
 
-    private byte[] TlvBuildPrimitive(byte bTag, byte[] baV) {                                       // *** TlvBuildPrimitive
-        byte[] baTlv;                                                                               //      make a ptomative T.L.V.
-        if (baV.length <= 127) { baTlv = new byte[2 + baV.length]; }                                //      ? length > 127 needs '1':: len
-        else                   { baTlv = new byte[2 + 1 + baV.length]; }                            //        length < 128 is just a simple length
-        int iOffset = 0;                                                                            //        Note: Max length catered for here is 255!
-        baTlv[iOffset++] = bTag;                                                                    //      insert T
-        if (baV.length > 127) { baTlv[iOffset++] = 1; }                                             //      insert L
-        baTlv[iOffset++] = (byte)baV.length;                                                        //
-        System.arraycopy(baV, 0, baTlv, iOffset, baV.length);                                       //      insert V
-        return baTlv;                                                                               // return. job done.
-    }
 
     private byte[] ConstructChallenge(SecretKey key) {                                              // *** ConstructChallenge
         Rng.nextBytes(baChallenge);                                                                 //  make random challenge
@@ -789,8 +737,10 @@ public class Cmd11 extends VCard {
     // #
     // ##########################################################################
     private byte[] DoReselect(byte[] baApdu) {                                                      // *** DoReselect
-        // ToDo: Implement DoReselect
-        return Response(SW.UNKNOWN);
+        byte[] baA5Material;
+        if (fUsingPseudoShellUID && !fPseudoAuthenticated) { baA5Material = FciBuildRandom();   }   // if pseudo shell and not pseudo authenticated, reissue the Random UID FCI
+        else                                               { baA5Material = FciBuildReselect(); }   // else real shell or pseudo authenticated OK
+        return Response( WrapFci(null, baA5Material), SW.NO_ERROR);                                 //
     }
 
 

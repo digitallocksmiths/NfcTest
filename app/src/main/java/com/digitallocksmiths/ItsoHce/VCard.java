@@ -1,5 +1,7 @@
 package com.digitallocksmiths.ItsoHce;
 
+import static java.lang.System.arraycopy;
+
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
@@ -11,6 +13,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.security.KeyStore;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Scanner;
 
 import org.json.JSONException;
@@ -24,6 +27,8 @@ import com.digitallocksmiths.ItsoHce.VcardCmd12.Cmd12;
 
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.DESedeKeySpec;
 
 public abstract class VCard {
     private static final String TAG = "VCard";
@@ -535,8 +540,100 @@ public abstract class VCard {
     }
 
 
+    protected SecretKey ConstructDesKey(byte[] baKeyMaterial) {
+        byte[] baFullSizeKey;
 
+        switch (baKeyMaterial.length) {
+            case 24:    baFullSizeKey = baKeyMaterial;
+                break;
+            case 16:    baFullSizeKey = new byte[24];
+                System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 0, 16);
+                System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 16, 8);
+                break;
+            case 8:     baFullSizeKey = new byte[24];
+                System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 0, 8);
+                System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 8, 8);
+                System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 16, 8);
+                break;
+            default:    return null;
+        }
 
-
-
+        try {
+            DESedeKeySpec keySpec = new DESedeKeySpec(baFullSizeKey);
+            SecretKeyFactory mySecretKeyFactory = SecretKeyFactory.getInstance("DESede");
+            return mySecretKeyFactory.generateSecret(keySpec);
+        }
+        catch (Exception e) {
+            Log.e(TAG, "MakeKey: " + e.getMessage());
+            return null;
+        }
     }
+
+    // =============================================================================================
+    // TLV support
+    //              limitations:   Tags are 1 byte
+    //                         :   Lengths  are 1..255
+    //                         :   Sorry! but it's simple!
+
+    protected byte[] TlvBuild(byte bTag, byte[] baV) {                                              // *** TlvBuild
+        byte[] baTlv;                                                                               //      make a primitive T.L.V.
+        if (baV.length <= 127) { baTlv = new byte[2 + baV.length]; }                                //      ? length > 127 needs '1':: len
+        else                   { baTlv = new byte[2 + 1 + baV.length]; }                            //        length < 128 is just a simple length
+        int iOffset = 0;                                                                            //        Note: Max length catered for here is 255!
+        baTlv[iOffset++] = bTag;                                                                    //      insert T
+        if (baV.length > 127) { baTlv[iOffset++] = 1; }                                             //      insert L
+        baTlv[iOffset++] = (byte)baV.length;                                                        //
+        System.arraycopy(baV, 0, baTlv, iOffset, baV.length);                                       //      insert V
+        return baTlv;                                                                               // return. job done.
+    }
+
+    protected byte[] TlvBuild(byte bTag, ArrayList<byte[]> tagList) {                               // *** TlvBuild
+        return TlvBuild(bTag, TlvList(tagList));                                                    //
+    }                                                                                               //
+
+    protected byte[] TlvList(ArrayList<byte[]> tagList) {                                           // *** TlvList
+        int iLen = 0;                                                                               //      TLV element list into byte[]
+        for (byte[] baTt : tagList) { iLen += baTt.length; }                                        //      calculate space to return all
+        byte[] baA5contents = new byte[iLen];                                                       //      create that much  space
+        int iOffset = 0;                                                                            //
+        for (byte[] baTt : tagList) {                                                               //      copy each tlv into this space
+            System.arraycopy(baTt, 0, baA5contents, iOffset, baTt.length);                          //
+            iOffset += baTt.length;                                                                 //
+        }                                                                                           //
+        return baA5contents;                                                                        // return with a job done well!
+    }                                                                                               //
+
+
+    protected byte[] WrapFci(byte[] baAid, byte[] baA5Body) {
+        boolean fA5_Long = (baA5Body.length > 127);
+        boolean f6F_Long;
+        if (baAid != null) {  f6F_Long = (( (2 + baAid.length) + (((fA5_Long) ? 3 : 2) + baA5Body.length)) > 127); }
+        else               {  f6F_Long = ((                      (((fA5_Long) ? 3 : 2) + baA5Body.length)) > 127); }
+
+        byte[] baFci = new byte[((f6F_Long) ? 3:2) +
+                ((baAid != null) ? (2 + baAid.length) : 0 ) +
+                ((fA5_Long)?3:2)   +
+                baA5Body.length];
+
+        int iOffset=0;
+        baFci[iOffset++] = 0x6F;                                                            // 6F : FCI tag
+        if (f6F_Long) { baFci[iOffset++] = (byte)0x81; }                                    //    len opt
+        baFci[iOffset++] = (byte)(baFci.length-iOffset);                                    //    len
+        if (baAid != null) {
+            baFci[iOffset++] = (byte) 0x84;                                                 //        84 : tag
+            baFci[iOffset++] = (byte) baAid.length;                                         //           len
+            arraycopy(baAid, 0, baFci, iOffset, baAid.length);                              //           body
+            iOffset += baAid.length;                                                        //
+        }
+        baFci[iOffset++] = (byte)0xa5;                                                      //        A5 : tag
+        if (fA5_Long) { baFci[iOffset++] = (byte) 0x81; }                                   //           len opt
+        baFci[iOffset++] = (byte)baA5Body.length;                                           //           len
+        arraycopy(baA5Body, 0, baFci, iOffset, baA5Body.length);                            //           body
+        iOffset += baA5Body.length;                                                         //
+        return baFci;
+    }
+
+
+
+
+}
