@@ -38,14 +38,15 @@ public class Cmd11 extends VCard {
 
     private static final byte  bCHAL_SIZE       =   8;                                              // Size of Random Challenge Data
 
-
     private static final short sPAGE_SIZE         = 256;                                            // size of sector (IPE or VRG records)
     private static class Sector   { byte[] baBody = new byte[sPAGE_SIZE]; }
 
     private static final byte  bPWD_SIZE        =   8;                                              // Size of Password Data
     private static class Password { byte[] baBody = new byte[bPWD_SIZE];  }
 
-
+    // ToDo: ITSO ref is 228. Who's right?
+    public static final short sMAXIPE_SIZE 		= (255 - 8 - 16);                                   // pwd[8] :: Ipe[x] :: Seal[16]  =< 255 bytes.
+    public static final byte  bCSS_SIZE     	=  8;                                               // Size of Commital Confirmation Signature.
 
     // ==========================================================================
     // Clear on reset 'RAM' variables
@@ -76,7 +77,7 @@ public class Cmd11 extends VCard {
     private byte[] baCapabillities;
     private byte[] baAuthKasParams;
 
-    private byte[]       baCSS       = new byte[8];                                                 // Commit Confirmation Signature
+    private byte[]       baCSS       = new byte[bCSS_SIZE];                                         // Commit Confirmation Signature
     private int          iTsn;                                                                      // Transaction Sequence Number;
 
     // not needed? private Sector   Shell;                                                          //     0: Shell
@@ -101,7 +102,7 @@ public class Cmd11 extends VCard {
 
 
 //  public static Checksum      Crc;                                                                //        CRC resource.
-//  public static Signature     Sig;                                                                // 		  MAC verifyer/generator.
+    public final  Cipher        Sig;                                                                // 		  MAC verifyer/generator. (DES needs to use a Cipher and grab the result)
 //  public static DESKey        SessionKey;                                                         //        ephemeral (transient) session key.
 //  public static MessageDigest Hash;                                                               //		  Apdu Message digest.
 
@@ -133,6 +134,7 @@ public class Cmd11 extends VCard {
             Rng  = new SecureRandom();
             Hash = MessageDigest.getInstance("SHA-256");
             Cip  = Cipher.getInstance("DESede/CBC/NoPadding");
+            Sig  = Cipher.getInstance("DESede/CBC/NoPadding");
         } catch (NoSuchAlgorithmException | NoSuchPaddingException e) {
             Log.e(TAG, "Cmd11: Crypto trouble ", e);
             throw new VCard.VirtualCardException("Crypto Algorithm missing");
@@ -495,43 +497,56 @@ public class Cmd11 extends VCard {
     protected byte[] Dispatch(byte[] baApdu) {                                                      // *** Card dispatch
         Log.d(TAG, "Dispatch");
 
-        if (baApdu[ISO7816.OFFSET_CLA] != bOurCLA) {                                                // Must be out CLA
-            return Response(SW.CLA_NOT_SUPPORTED);                                                  //      nothing else is good enough.
-        }                                                                                           //
+        try {
+            if (baApdu[ISO7816.OFFSET_CLA] != bOurCLA) {                                            // Must be our CLA
+                return Response(SW.CLA_NOT_SUPPORTED);                                              //      nothing else is good enough.
+            }                                                                                       //
 
-        if (!fAuthenticated) {                                                                      // Not authenticated yet...
-            switch (baApdu[ISO7816.OFFSET_INS]) {                                                   //      Which INS do we want ?
-                case bINS_Authenticate: return DoAuthenticate(baApdu);                              //      supported
-                case bINS_ReadIpe:      return DoReadIpe(baApdu);                                   //      ..
-                case bINS_ReadVrg:      return DoReadVrg(baApdu);                                   //      ..
-                case bINS_ReadLog:      return DoReadLog(baApdu);                                   //      ..
-                case bINS_Reselect:     return DoReselect(baApdu);                                  //      ..
-                case bINS_UpdateIpe:                                                                //      unsuported
-                case bINS_UpdateVrg:                                                                //      ..
-                case bINS_UpdateLog:                                                                //      ..
-                case bINS_UpdateDir:                                                                //      ..
-                case bINS_EndSession:   return Response(SW.SECURITY_STATUS_NOT_SATISFIED);          //      ..
-                default:                return Response(SW.INS_NOT_SUPPORTED);                      //      unrecognised
+            if (!fAuthenticated) {                                                                  // Not authenticated yet...
+                switch (baApdu[ISO7816.OFFSET_INS]) {                                               //      Which INS do we want ?
+                    case bINS_Authenticate:            DoAuthenticate(baApdu);  break;              //      supported
+                    case bINS_ReadIpe:                 DoReadIpe(baApdu);       break;              //      ..
+                    case bINS_ReadVrg:                 DoReadVrg(baApdu);       break;              //      ..
+                    case bINS_ReadLog:                 DoReadLog(baApdu);       break;              //      ..
+                    case bINS_Reselect:                DoReselect(baApdu);      break;              //      ..
+                    case bINS_UpdateIpe:                                                            //      unsupported
+                    case bINS_UpdateVrg:                                                            //      ..
+                    case bINS_UpdateLog:                                                            //      ..
+                    case bINS_UpdateDir:                                                            //      ..
+                    case bINS_EndSession:                                                           //      ..
+                        ApduException.Throw(SW.SECURITY_STATUS_NOT_SATISFIED);                      //
+                    default:                                                                        //      all others
+                        ApduException.Throw(SW.INS_NOT_SUPPORTED);                                  //          unrecognised
+                }                                                                                   //
             }                                                                                       //
-        }                                                                                           //
-        else if (fAuthenticated) {                                                                  // Authenticated, so Secure session active
-            switch (baApdu[ISO7816.OFFSET_INS]) {                                                   //      Which INS do we want ?
-                case bINS_Authenticate: return Response(SW.CONDITIONS_NOT_SATISFIED);               //      out of context
-                case bINS_ReadIpe:      return DoReadIpe(baApdu);                                   //      supported
-                case bINS_ReadVrg:      return DoReadVrg(baApdu);                                   //      ..
-                case bINS_ReadLog:      return DoReadLog(baApdu);                                   //      ..
-                case bINS_Reselect:     return DoReselect(baApdu);                                  //      ..
-                case bINS_UpdateIpe:    return DoUpdateIpe(baApdu);                                 //      ..
-                case bINS_UpdateVrg:    return DoUpdateVrg(baApdu);                                 //      ..
-                case bINS_UpdateLog:    return DoUpdateLog(baApdu);                                 //      ..
-                case bINS_UpdateDir:    return DoUpdateDir(baApdu);                                 //      ..
-                case bINS_EndSession:   return DoEndSession(baApdu);                                //      ..
-                default:                return Response(SW.INS_NOT_SUPPORTED);                      //      unrecognised
-            }                                                                                       //
+            else if (fAuthenticated) {                                                              // Authenticated, so Secure session active
+                switch (baApdu[ISO7816.OFFSET_INS]) {                                               //      Which INS do we want ?
+                    case bINS_ReadIpe:                 DoReadIpe(baApdu);      break;               //      supported
+                    case bINS_ReadVrg:                 DoReadVrg(baApdu);      break;               //      ..
+                    case bINS_ReadLog:                 DoReadLog(baApdu);      break;               //      ..
+                    case bINS_Reselect:                DoReselect(baApdu);     break;               //      ..
+                    case bINS_UpdateIpe:               DoUpdateIpe(baApdu);    break;               //      ..
+                    case bINS_UpdateVrg:               DoUpdateVrg(baApdu);    break;               //      ..
+                    case bINS_UpdateLog:               DoUpdateLog(baApdu);    break;               //      ..
+                    case bINS_UpdateDir:               DoUpdateDir(baApdu);    break;               //      ..
+                    case bINS_EndSession:              DoEndSession(baApdu);   break;               //      ..
+                    case bINS_Authenticate:
+                        ApduException.Throw(SW.SECURITY_STATUS_NOT_SATISFIED);                      //
+                    default:                                                                        //      all others
+                        ApduException.Throw(SW.INS_NOT_SUPPORTED);                                  //          unrecognised
+                }                                                                                   //
+            } else {
+                ApduException.Throw(SW.SECURITY_STATUS_NOT_SATISFIED);
+            }
         }
-        else {
-            return Response(SW.SECURITY_STATUS_NOT_SATISFIED);
+        catch (ApduExitException e) {
+            return e.GetResponse();
         }
+        catch (Exception e) {
+            Log.d(TAG, "Dispatch: " + e.getMessage());
+            return Response(SW.UNKNOWN);
+        }
+        return null;                                                                                // won't happen
     }
 
 
@@ -548,16 +563,14 @@ public class Cmd11 extends VCard {
     // #  See Also:
     // #
     // ##########################################################################
-    private byte[] DoAuthenticate(byte[] baApdu) {                                                  // *** DoAuthenticate
-        // ToDo: Implement Authentication
-        //return Response(SW.UNKNOWN);
+    private void DoAuthenticate(byte[] baApdu) throws ApduExitException {                           // *** DoAuthenticate
 
         if (fAuthenticated) {												                        // Should not be permitted if we are already authenticated.
-            return Response(SW.SECURITY_STATUS_NOT_SATISFIED);										//      Not happy response
+            ApduException.Throw(SW.SECURITY_STATUS_NOT_SATISFIED);							     	//      Not happy response
         }																							//
 
-        if (baApdu[ISO7816.OFFSET_LC] != 16) {														// Auth expects 16 bytes from the ISAM.
-            return Response(SW.WRONG_LENGTH);														//      Not happy response
+        if ((baApdu.length < ISO7816.OFFSET_LC) || (baApdu[ISO7816.OFFSET_LC] != 16)) {				// Auth expects 16 bytes from the ISAM.
+            ApduException.Throw(SW.WRONG_LENGTH);													//      Not happy response
         }																							//
 
         byte[] baResponse;                                                                          // response to the challenge's response.
@@ -582,16 +595,18 @@ public class Cmd11 extends VCard {
                     Hash.reset();                                                                   // initialise Apdu Hash
                 }
             }
+            ApduException.Throw(baResponse, SW.NO_ERROR);											// Exit Happy.
         }
         catch (AuthenticationException e) {                                                         // Session key crypto failures end here.
-            return Response(SW.SECURITY_STATUS_NOT_SATISFIED);                                      //      Not happy response
+            ApduException.Throw(SW.SECURITY_STATUS_NOT_SATISFIED);                                  //      Not happy response
+        }                                                                                           //
+        catch (ApduExitException e) {                                                               //
+            throw e;                                                                                //
         }                                                                                           //
         catch (Exception e) {                                                                       // All other exceptions end here.
             Log.d(TAG, "DoAuthenticate: " + e.getMessage());                                        //       Leave a clue about what went wrong!
-            return Response(SW.UNKNOWN);                                                            //
+            ApduException.Throw(SW.UNKNOWN);                                                        //
         }
-
-        return Response(baResponse, SW.NO_ERROR);													// Exit Happy.
     }
 
 
@@ -641,7 +656,7 @@ public class Cmd11 extends VCard {
             byte[] baRotRnd = Cip.doFinal(baApdu, ISO7816.OFFSET_CDATA+8, bCHAL_SIZE);
 
             for (int i = 0; i < bCHAL_SIZE; i++) {                                                              // DESFires CBC is weird.
-                baRotRnd[i] ^= baApdu[ISO7816.OFFSET_CDATA + i];                                                          //
+                baRotRnd[i] ^= baApdu[ISO7816.OFFSET_CDATA + i];                                                //
             }                                                                                                   //
 
             if (! BytesMatch(baRotRnd, 0, baChallenge, 1, bCHAL_SIZE-1)) {                                      // 7 out of 8 is good enough!
@@ -682,10 +697,39 @@ public class Cmd11 extends VCard {
     // #  See Also:
     // #
     // ##########################################################################
-    private byte[] DoReadIpe(byte[] baApdu) {                                                       // *** DoReadIpe
-        // ToDo: Implement DoReadIpe
-        return Response(SW.UNKNOWN);
+    private void DoReadIpe(byte[] baApdu)  throws ApduExitException {                                                       // *** DoReadIpe
+        int iIpeNo = (baApdu[ISO7816.OFFSET_P1] - 1) & 0xFF;
+
+        if ((iIpeNo > (shell.getE()-2)) || (baApdu[ISO7816.OFFSET_P2] != 0)) {						// Check IPE(1..E-1) & P2==0 before continuing
+            ApduException.Throw(SW.INCORRECT_P1P2);                                                 //      Oops. it's not
+        }                                                                                           //
+
+        if ((baApdu.length < 5) || (baApdu[ISO7816.OFFSET_LC] != 0)) {							    // length = all.
+            ApduException.Throw(SW.WRONG_LENGTH);			                                        //
+        }																                            //
+
+        if (directory.E_Empty(iIpeNo)) {                                                            // Confirm the IPE is not empty
+            ApduException.Throw(SW.RECORD_NOT_FOUND);                                                   // Report "Record Not Found" as per spec.
+        }
+
+        int iIpeSize         = (aIpe[iIpeNo].baBody[0] & 0xfC) + 16;                                // Size of IPE body + InstanceID + seal.
+        byte[] baDeliverable = new byte[5 + iIpeSize];                                              // Get the IPE
+
+        System.arraycopy(directory.getEntry(iIpeNo), 0, baDeliverable, 0, 5);                       // Dir entry +
+        System.arraycopy(aIpe[iIpeNo].baBody,        0, baDeliverable, 5, iIpeSize);                // Body + seal
+
+        ResponseHashedIfNecessary(baDeliverable, SW.NO_ERROR);
     }
+
+    private void  ResponseHashedIfNecessary(byte[] baBuff, short sStatusWord) throws ApduExitException {
+        if (fAuthenticated) {
+            Hash.update(baBuff);
+            Hash.update((byte) (sStatusWord >> 8));
+            Hash.update((byte) (sStatusWord & (byte) 0xFF));
+        }
+        ApduException.Throw(baBuff, sStatusWord);
+    }
+
 
     // ##########################################################################
     // #  Function: DoReadVrg
@@ -700,9 +744,28 @@ public class Cmd11 extends VCard {
     // #  See Also:
     // #
     // ##########################################################################
-    private byte[] DoReadVrg(byte[] baApdu) {                                                       // *** DoReadVrg
-        // ToDo: Implement DoReadVrg
-        return Response(SW.UNKNOWN);
+    private void DoReadVrg(byte[] baApdu) throws ApduExitException {                                                       // *** DoReadVrg
+        int  iIpeNo = (baApdu[ISO7816.OFFSET_P1] - 1) & 0xFF;
+
+        if ((iIpeNo > (shell.getE()-2)) || (baApdu[ISO7816.OFFSET_P2] != 0)) {						// Check IPE(1..E-1) & P2==0 before continuing
+            ApduException.Throw(SW.INCORRECT_P1P2);                                                 //      Oops. it's not
+        }                                                                                           //
+
+        if ((baApdu.length < 5) || (baApdu[ISO7816.OFFSET_LC] != 0)) {							    // length = all.
+            ApduException.Throw(SW.WRONG_LENGTH);			                                        //
+        }																                            //
+
+        if (directory.E_Empty(iIpeNo) || !directory.HasVrg(iIpeNo)) {                               // Confirm the IPE is not empty and if full has a VRG
+            ApduException.Throw(SW.RECORD_NOT_FOUND);                                               //      Grief = "Record Not Found".
+        }                                                                                           //
+
+        int iVrgSize         = (aVrg[iIpeNo].baBody[0] & 0xfC) + 16;                                // Size of VRG body + InstanceID + seal.
+        byte[] baDeliverable = new byte[5 + iVrgSize];                                              // Get the VRG
+
+        System.arraycopy(directory.getEntry(iIpeNo), 0, baDeliverable, 0, 5);                       // Dir entry +
+        System.arraycopy(aVrg[iIpeNo].baBody,        0, baDeliverable, 5, iVrgSize);                // Body + seal
+
+        ResponseHashedIfNecessary(baDeliverable, SW.NO_ERROR);
     }
 
     // ##########################################################################
@@ -718,9 +781,21 @@ public class Cmd11 extends VCard {
     // #  See Also:
     // #
     // ##########################################################################
-    private byte[] DoReadLog(byte[] baApdu) {                                                       // *** DoReadLog
-        // ToDo: Implement DoReadLog
-        return Response(SW.UNKNOWN);
+    private void DoReadLog(byte[] baApdu) throws ApduExitException {                                                       // *** DoReadLog
+        if ((baApdu[ISO7816.OFFSET_P1] < 1) || (baApdu[ISO7816.OFFSET_P1] > 5)	||                  // record count, 1..5 == OK
+            (baApdu[ISO7816.OFFSET_P2] != 0)) {							                            //     P2 must be zero
+            ApduException.Throw(SW.INCORRECT_P1P2);                                                 //  Go home if we don't like it.
+        }
+
+        if ((baApdu.length < 5) || (baApdu[ISO7816.OFFSET_LC] != 0)) {							    // length = all.
+            ApduException.Throw(SW.WRONG_LENGTH);			                                        //
+        }																                            //
+
+        short  sLen          = (short)(baApdu[ISO7816.OFFSET_P1]*0x30);                             // how many * record size
+        byte[] baDeliverable = new byte[sLen];                                                      // Space needed
+
+        System.arraycopy(TTLog.baBody, 0, baDeliverable, 0, sLen);                                  // Records copied
+        ResponseHashedIfNecessary(baDeliverable, SW.NO_ERROR);
     }
 
     // ##########################################################################
@@ -736,11 +811,11 @@ public class Cmd11 extends VCard {
     // #  See Also:
     // #
     // ##########################################################################
-    private byte[] DoReselect(byte[] baApdu) {                                                      // *** DoReselect
+    private void DoReselect(byte[] baApdu) throws ApduExitException {                                                      // *** DoReselect
         byte[] baA5Material;
         if (fUsingPseudoShellUID && !fPseudoAuthenticated) { baA5Material = FciBuildRandom();   }   // if pseudo shell and not pseudo authenticated, reissue the Random UID FCI
         else                                               { baA5Material = FciBuildReselect(); }   // else real shell or pseudo authenticated OK
-        return Response( WrapAsFci(null, baA5Material), SW.NO_ERROR);                                 //
+        ApduException.Throw( WrapAsFci(null, baA5Material), SW.NO_ERROR);                           //
     }
 
 
@@ -757,10 +832,47 @@ public class Cmd11 extends VCard {
     // #  See Also:
     // #
     // ##########################################################################
-    private byte[] DoUpdateIpe(byte[] baApdu) {                                                     // *** DoUpdateIpe
-        // ToDo: Implement DoUpdateIpe
-        return Response(SW.UNKNOWN);
+    private void DoUpdateIpe(byte[] baApdu) throws ApduExitException {                              // *** DoUpdateIpe
+
+        int iIpeNo   = ((baApdu[ISO7816.OFFSET_P1] - 1) & 0xFF);                                    // IPE[1..E-1] ==> range 0..E-2
+        int iDataLen = baApdu.length - ISO7816.OFFSET_CDATA;                                        // Payload size
+        UpdateCheckIpeNo(baApdu, iIpeNo);                                                           // IPE# happy?
+        UpdateCheckLength(baApdu, iDataLen);                                                        // Len happy ?
+        UpdateCheckPassword(baApdu, iIpeNo);                                                        // Password Happy ?
+        UpdateStoreHashAndExit(baApdu, aIpe[iIpeNo].baBody, iDataLen);                              // Copy new data to page and update the hash exit Happy exception.
     }
+
+    private void UpdateCheckIpeNo(byte[] baApdu, int  iIpeNo) throws ApduExitException {            // check parameters and collect data
+        if ((iIpeNo > (shell.getE()-2)) || (baApdu[ISO7816.OFFSET_P2] != 0)) {                      // Check IPE(1..E-1) & P2==0 before continuing
+            ApduException.Throw(SW.INCORRECT_P1P2);                                                 //      Oops. it's not
+        }                                                                                           //
+    }                                                                                               //
+
+    private void UpdateCheckLength(byte[] baApdu, int iLen) throws ApduExitException {              // check parameters and collect data
+        if ((baApdu.length < (ISO7816.OFFSET_CDATA + bPWD_SIZE)) ||                                 // should be big enough to hold length at least
+            (iLen != (bPWD_SIZE +(baApdu[ISO7816.OFFSET_CDATA + bPWD_SIZE] & 0xFC) + 16)) ||        // length should be pwd::ipe::seal
+            ((baApdu[ISO7816.OFFSET_CDATA + bPWD_SIZE] & 0xFC) > sMAXIPE_SIZE) ) {                  // and <= limit to fit in an APDU
+            ApduException.Throw(SW.WRONG_LENGTH);											        //
+        }                                                                                           //
+    }                                                                                               //
+
+    private void UpdateCheckPassword(byte[] baBuff, int iSlot) throws ApduExitException {			// check parameters and collect data
+        byte[] baTmp = Arrays.copyOfRange(baBuff, ISO7816.OFFSET_CDATA, ISO7816.OFFSET_CDATA + bPWD_SIZE);                 // Just the pwd bit
+        if (! MessageDigest.isEqual(baTmp, aPassword[iSlot].baBody)) {                              // Time invariant check of the password.
+            ApduException.Throw(SW.AUTHENTICATION_FAILURE);                                         //      Fail. Bad luck!
+        }                                                                                           //
+    }                                                                                               //
+
+    private void UpdateStoreHashAndExit(byte[] baBuff,  byte[] baPage, int iLen) throws ApduExitException {
+        System.arraycopy(baBuff, ISO7816.OFFSET_CDATA + bPWD_SIZE,                                  // source,          // Copy new contents to the page
+                         baPage, 0,                                                                 // destination      //
+                         iLen - bPWD_SIZE);                                                         // size.            //
+        Hash.update(baBuff, 0, ISO7816.OFFSET_CDATA + iLen);                                        // Update the Hash  // Apdu
+        Hash.update((byte) (SW.NO_ERROR >> 8));                                                     //                  // and it's SW
+        Hash.update((byte) (SW.NO_ERROR & (byte) 0xFF));                                            //                  //
+        ApduException.Throw(SW.NO_ERROR);                                                           // Happy ending.
+    }
+
 
 
     // ##########################################################################
@@ -776,9 +888,13 @@ public class Cmd11 extends VCard {
     // #  See Also:
     // #
     // ##########################################################################
-    private byte[] DoUpdateVrg(byte[] baApdu) {                                                     // *** DoUpdateVrg
-        // ToDo: Implement DoUpdateVrg
-        return Response(SW.UNKNOWN);
+    private void DoUpdateVrg(byte[] baApdu) throws ApduExitException {                              // *** DoUpdateVrg
+        int iIpeNo   = ((baApdu[ISO7816.OFFSET_P1] - 1) & 0xFF);                                    // IPE[1..E-1] ==> range 0..E-2
+        int iDataLen = baApdu.length - ISO7816.OFFSET_CDATA;                                        // Payload size
+        UpdateCheckIpeNo(baApdu, iIpeNo);                                                           // IPE# happy?
+        UpdateCheckLength(baApdu, iDataLen);                                                        // Len happy ?
+        UpdateCheckPassword(baApdu, iIpeNo);                                                        // Password Happy ?
+        UpdateStoreHashAndExit(baApdu, aVrg[iIpeNo].baBody, iDataLen);                              // Copy new data to page and update the hash exit Happy exception.
     }
 
 
@@ -795,11 +911,18 @@ public class Cmd11 extends VCard {
     // #  See Also:
     // #
     // ##########################################################################
-    private byte[] DoUpdateLog(byte[] baApdu) {                                                     // *** DoUpdateLog
-        // ToDo: Implement DoUpdateLog
-        return Response(SW.UNKNOWN);
+    private void DoUpdateLog(byte[] baApdu) throws ApduExitException, Exception {                   // *** DoUpdateLog
+        int iIpeNo   = shell.getE() -1;                                                             // IPE # E is reserved for the log
+        int iDataLen = baApdu.length - ISO7816.OFFSET_CDATA;                                        // Payload size
+        if ((iDataLen < bPWD_SIZE) || (bPWD_SIZE + 0x30 < iDataLen)) {                              // length should be pwd::logRecord[..30]
+            ApduException.Throw(SW.WRONG_LENGTH);                                                   //      Oops. it's not
+        }                                                                                           //
+        UpdateCheckPassword(baApdu, iIpeNo);                                                        // Password Happy ?
+        System.arraycopy(TTLog.baBody, 0, TTLog.baBody, 0x30, TTLog.baBody.length - 0x30);          // Shuffle old records 0..4 to new 1..5
+        UpdateStoreHashAndExit(baApdu, TTLog.baBody, iDataLen);                                     // Squeeze in the new record at #0 &  hash exit Happy exception.
     }
 
+    // ToDo: test when the body < password length
 
     // ##########################################################################
     // #  Function: DoUpdateDir
@@ -814,9 +937,19 @@ public class Cmd11 extends VCard {
     // #  See Also:
     // #
     // ##########################################################################
-    private byte[] DoUpdateDir(byte[] baApdu) {                                                     // *** DoUpdateDir
-        // ToDo: Implement DoUpdateDir
-        return Response(SW.UNKNOWN);
+    private void DoUpdateDir(byte[] baApdu) throws ApduExitException, Exception {                   // *** DoUpdateDir
+        int iIpeNo   = shell.getE();                                                                // IPE # E+1 is reserved for the Directory
+        int iDataLen = baApdu.length - ISO7816.OFFSET_CDATA;                                        // Payload size
+        if (iDataLen != bPWD_SIZE + directory.getLength()) {                                        // length should be pwd::logRecord[30]
+            ApduException.Throw(SW.WRONG_LENGTH);                                                   //      Oops. it's not
+        }                                                                                           //
+
+        UpdateCheckPassword(baApdu, iIpeNo);                                                        // Password Happy ?
+        directory.Update(baApdu, bPWD_SIZE + ISO7816.OFFSET_CDATA);                                 //
+        Hash.update(baApdu, 0, baApdu.length);                                                      // Update the Hash  // Apdu
+        Hash.update((byte) (SW.NO_ERROR >> 8));                                                     //                  // and it's SW
+        Hash.update((byte) (SW.NO_ERROR & (byte) 0xFF));                                            //                  //
+        ApduException.Throw(SW.NO_ERROR);                                                           // Happy ending.
     }
 
 
@@ -827,16 +960,41 @@ public class Cmd11 extends VCard {
     // #  Parameters:
     // #        byte[] baApdu - The APDU sent by the PCD.
     // #
-    // #  Returns:
+    // #  Returns by ApduExitException
     // #        byte[] - This ICC's response including the Status word.
     // #
     // #  See Also:
     // #
     // ##########################################################################
-    private byte[] DoEndSession(byte[] baApdu) {                                                    // *** DoEndSession
-        // ToDo: Implement DoEndSession
-        return Response(SW.UNKNOWN);
+    private void DoEndSession(byte[] baApdu) throws ApduExitException, Exception {                  // *** DoEndSession
+        fAuthenticated = false;                                                                     // Always terminate the SM now this has been called.
+
+        if ((baApdu[ISO7816.OFFSET_P1] != 0) || (baApdu[ISO7816.OFFSET_P2] != 0)) {                 //  P1 & P2 should = 0
+            ApduException.Throw(SW.INCORRECT_P1P2);                                                 //
+        }
+        if (baApdu[ISO7816.OFFSET_LC] != bCSS_SIZE) {                                               // Check Len = sig size.
+            ApduException.Throw(SW.WRONG_LENGTH);                                                   //
+        }                                                                                           //
+
+        byte[] baMac = Hash.digest();		                                                        // This is our Hash of the earlier APDUs
+
+        if ((baMac.length % 8) != 0) {                                                              // Padded if the MAC is not block of 8
+            baMac = Arrays.copyOfRange(baMac, 0, ((baMac.length + 7) / 8) * 8);                     //
+        }                                                                                           //
+
+        Sig.init(Cipher.ENCRYPT_MODE, SessionKey, new IvParameterSpec(new byte[8]));                // We do Sig as a DES MAC
+        byte[] baSig = Sig.doFinal(baMac);                                                          // Calculate the MAC. it's the last block here
+        if (!BytesMatch(baApdu, ISO7816.OFFSET_CDATA, baSig, baSig.length - 8, 8)) {                // Check we agree with the caller.
+            ApduException.Throw(SW.AUTHENTICATION_FAILURE);                                         //      Not happy!
+        }                                                                                           //
+
+        Sig.init(Cipher.ENCRYPT_MODE, SessionKey, new IvParameterSpec(new byte[8]));                //
+        baCSS = Sig.doFinal(baSig, baSig.length - bCSS_SIZE, bCSS_SIZE);                            // CSS response = enc(TS)
+        incTsn();																	                // Transaction number ++
+        ImageSave();
+        ApduException.Throw(baCSS, SW.NO_ERROR);
     }
+
 
 // ==========================================================================================
 // Because a phone keeps this in RAM and writes it to the file at the same time as the sectors
@@ -870,9 +1028,9 @@ public class Cmd11 extends VCard {
     public int    getTsn()                            { return iTsn;                            }
     public void   incTsn()                            { iTsn++;                                 }
 
-    public void   setDir(byte[] baV)              { directory.Set(baV);                         }   // Dir accessors
-    public void   getDir(byte[] baV)              { arrayCopy(directory.Get(), baV);            }
-    public byte[] getDir()                        { return directory.Get();                     }
+    //public void   setDir(byte[] baV)              { directory.Set(baV);                         }   // Dir accessors
+    //public void   getDir(byte[] baV)              { arrayCopy(directory.Get(), baV);            }
+    //public byte[] getDir()                        { return directory.Get();                     }
     public void   setLog(byte[] baV)              { TTLog.baBody = makeSector(baV);             }  // Log accessors
     public void   getLog(byte[] baV)              { arrayCopy(TTLog.baBody, baV);               }
     public byte[] getLog()                        { return TTLog.baBody;                        }

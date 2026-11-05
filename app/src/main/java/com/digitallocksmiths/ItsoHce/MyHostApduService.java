@@ -31,8 +31,8 @@ public class MyHostApduService extends HostApduService {
         super.onCreate();
         Log.d(TAG, "Service created");
         try {
-            VCard.Initialize(GetImageDirectory());                                                      // set up the classes NVM
-            vcard = VCard.FactoryImageLoad();                                                           // load the CM image.
+            VCard.Initialize(GetImageDirectory());                                                  // set up the classes NVM
+            vcard = VCard.FactoryImageLoad();                                                       // load the CM image.
         } catch (VCard.VirtualCardException e) {
             throw new RuntimeException(e);
         }
@@ -77,6 +77,7 @@ public class MyHostApduService extends HostApduService {
                 return VCard.Response(baFci, VCard.SW.NO_ERROR);                                    // return it with the happy message.
         }
 
+        // ToDo: Add sanity check here to ensure APDU is well formed one of 4 classes
         return vcard.Dispatch(commandApdu);
     }
 

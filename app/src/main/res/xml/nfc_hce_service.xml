@@ -4,6 +4,6 @@
     <aid-group
         android:category="other"
         android:description="@string/hce_aid_desc">
-        <aid-filter android:name="F0010203040506" />
+        <aid-filter android:name="A0000002164954534F2D31" />
     </aid-group>
 </host-apdu-service>

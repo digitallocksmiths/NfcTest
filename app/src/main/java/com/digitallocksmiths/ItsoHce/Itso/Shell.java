@@ -13,10 +13,10 @@ public class Shell {
     public byte getLength()         { return (byte)(  baShell[0] & 0xFC); }
     public byte getBitmap()         { return (byte)(((baShell[0] & 0x03) << 4) | ( (baShell[1] & 0xF0) >> 4)); }
     public byte getFormatRevision() { return (byte)(  baShell[1] & 0x0F); }
-    public byte[] getIsrn()         { return Arrays.copyOfRange(baShell, 2, 9); }
-    public byte[] getIin()          { return Arrays.copyOfRange(baShell, 2, 3); }
-    public byte[] getOid()          { return Arrays.copyOfRange(baShell, 5, 2); }
-    public byte[] getIssnChd()      { return Arrays.copyOfRange(baShell, 7, 4); }
+    public byte[] getIsrn()         { return Arrays.copyOfRange(baShell, 2, 2+9); }
+    public byte[] getIin()          { return Arrays.copyOfRange(baShell, 2, 2+3); }
+    public byte[] getOid()          { return Arrays.copyOfRange(baShell, 5, 5+2); }
+    public byte[] getIssnChd()      { return Arrays.copyOfRange(baShell, 7, 7+4); }
     public byte getFvc()            { return baShell[11]; }
     public byte getKsc()            { return baShell[12]; }
     public byte  getKvc()           { return baShell[13]; }

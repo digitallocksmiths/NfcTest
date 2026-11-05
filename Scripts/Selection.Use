@@ -8,14 +8,14 @@
 
     @ResetA.cold;
 
-var Aid=F0010203040506;
+var Aid=A0000002164954534F2D31;
 
-var Apdu = 00A40400 @Length(Aid) Aid;
+var Apdu = 00A40400 Aid.Length Aid;
 
 var resp = @Apdu(Apdu);
 
 
 @Apdu(0011223344);
-@Apdu(Apdu 00);
+
 
 

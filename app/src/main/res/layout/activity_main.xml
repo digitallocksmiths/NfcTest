@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Portrait: log text box on top, buttons in a 3 x 2 grid below it.
+     The button area is a fixed height so up to three more buttons can be added
+     (append their ids to buttonFlow's constraint_referenced_ids) without moving the text box. -->
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
@@ -8,71 +11,55 @@
     tools:context=".MainActivity">
 
     <TextView
-        android:id="@+id/textView"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Hello World!"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintVertical_bias="0.629" />
-
-
-    <Button
-        android:id="@+id/buttonClose"
-        android:layout_width="110dp"
-        android:layout_height="50dp"
-        android:layout_marginEnd="152dp"
-        android:layout_marginBottom="24dp"
-        android:text="Close"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <TextView
         android:id="@+id/txtquestion"
-        android:layout_width="290dp"
-        android:layout_height="388dp"
-        android:layout_marginStart="32dp"
-        android:layout_marginTop="32dp"
-        android:layout_marginEnd="32dp"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_margin="16dp"
         android:background="@android:drawable/alert_light_frame"
-        android:lines="20"
         android:scrollbars="vertical"
         android:scrollHorizontally="false"
         android:textSize="15sp"
+        app:layout_constraintBottom_toTopOf="@+id/buttonFlow"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <!-- 2 rows x 50dp + 8dp gap -->
+    <androidx.constraintlayout.helper.widget.Flow
+        android:id="@+id/buttonFlow"
+        android:layout_width="0dp"
+        android:layout_height="108dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="16dp"
+        app:constraint_referenced_ids="buttonLoad,buttonSave,buttonClose"
+        app:flow_horizontalGap="8dp"
+        app:flow_horizontalStyle="packed"
+        app:flow_maxElementsWrap="3"
+        app:flow_verticalBias="0"
+        app:flow_verticalGap="8dp"
+        app:flow_verticalStyle="packed"
+        app:flow_wrapMode="aligned"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
     <Button
         android:id="@+id/buttonLoad"
-        android:layout_width="110dp"
+        android:layout_width="100dp"
         android:layout_height="50dp"
-        android:layout_marginStart="149dp"
-        android:layout_marginTop="26dp"
-        android:layout_marginEnd="152dp"
-        android:layout_marginBottom="2dp"
-        android:text="Load"
-        app:layout_constraintBottom_toTopOf="@+id/buttonSave"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontal_bias="1.0"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/textView" />
+        android:text="Load" />
 
     <Button
         android:id="@+id/buttonSave"
-        android:layout_width="110dp"
+        android:layout_width="100dp"
         android:layout_height="50dp"
-        android:layout_marginStart="149dp"
-        android:layout_marginTop="2dp"
-        android:layout_marginEnd="152dp"
-        android:layout_marginBottom="2dp"
-        android:text="Save"
-        app:layout_constraintBottom_toTopOf="@+id/buttonClose"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/buttonLoad" />
+        android:text="Save" />
 
+    <Button
+        android:id="@+id/buttonClose"
+        android:layout_width="100dp"
+        android:layout_height="50dp"
+        android:text="Close" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

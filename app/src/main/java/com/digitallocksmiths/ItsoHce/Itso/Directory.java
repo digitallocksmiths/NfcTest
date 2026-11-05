@@ -18,11 +18,19 @@ public class Directory {
     public byte[] Get()             { return baDirectory; }
     public byte[] Set(byte[] baV)   { baDirectory = baV; return baDirectory; }
 
+    public void Update(byte[] baV, int iOffset) {
+        System.arraycopy(baV, iOffset, baDirectory, 0, baDirectory.length);
+    }
+
     public byte[] getEntry(int i) {
         int iOffset = 2 + (i-1)* 5;
         return Arrays.copyOfRange(baDirectory, iOffset, iOffset+5);
     }
 
+    public boolean HasVrg(int i) {
+        int iOffset = 2 + (i-1)* 5;
+        return (baDirectory[iOffset + 3] & 0x80) == 0x80;
+    }
 
     public boolean E_Ext(int i) {
         int iOffset = 2 + (i-1)* 5;

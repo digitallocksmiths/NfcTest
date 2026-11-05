@@ -7,6 +7,7 @@ import android.view.View;
 import android.widget.TextView;
 
 import androidx.activity.EdgeToEdge;
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
@@ -51,8 +52,14 @@ public class MainActivity extends AppCompatActivity {
         tv.setMovementMethod(ScrollingMovementMethod.getInstance());
         tv.setMovementMethod(new ScrollingMovementMethod());
 
-        tv.append("NFC HCE Service is active.\n");
-        tv.append("AID: F0010203040506\n");
+        boolean bRestored = savedInstanceState != null && savedInstanceState.containsKey(LOG_TEXT_KEY);
+        if (bRestored) {                                                                                // recreated (e.g. rotation): put the log back
+            tv.setText(savedInstanceState.getCharSequence(LOG_TEXT_KEY));
+            tv.post(() -> Print(""));                                                                   // scroll to the end once laid out
+        } else {
+            tv.append("NFC HCE Service is active.\n");
+            tv.append("AID: A0000002164954534F2D31\n");
+        }
 
         try {
             VCard.Initialize(GetImageDirectory());                                                      // set up the classes NVM
@@ -62,8 +69,19 @@ public class MainActivity extends AppCompatActivity {
             throw new RuntimeException(e);
         }
 
-        tv.append("Running: " + vcard.NameGet()  + ": " + vcard.TitleGet() + "\n");
+        if (!bRestored) {
+            tv.append("Running: " + vcard.NameGet()  + ": " + vcard.TitleGet() + "\n");
+        }
 
+    }
+
+    private static final String LOG_TEXT_KEY = "logText";
+
+    @Override
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        TextView tv = findViewById(R.id.txtquestion);
+        outState.putCharSequence(LOG_TEXT_KEY, tv.getText());
     }
 
     public void CloseButton(View v) {

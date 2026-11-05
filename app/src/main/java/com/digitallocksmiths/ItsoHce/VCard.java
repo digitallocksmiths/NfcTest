@@ -258,6 +258,9 @@ public abstract class VCard {
         }
     };
 
+    // reset needs to do this...
+    // vcard = VCard.FactoryImageLoad();
+
     protected abstract int      ImageGetSize();                                                     // subclasses indicate their own storage volume requirements
     protected abstract void     ImageDeserialize(ByteBuffer buffer)  throws VirtualCardException;   // subclasses populate their working variables here.
     protected abstract void     ImageSerialize(ByteBuffer buffer);                                  // subclasses serialize their variables here.
@@ -286,6 +289,42 @@ public abstract class VCard {
         }
     }
 
+    // =============================================================================================
+
+    public static class ApduExitException extends Exception {                                // Response Exit StatusReportingException
+        private short   sExcuse;
+        private byte[]  baData;
+        public ApduExitException() { super(); }
+
+        public byte[] GetResponse() {
+            if (baData == null) { return Response(sExcuse);         }
+            else                { return Response(baData, sExcuse); }
+        }
+
+        public void Throw(byte[] baData, short sStatusWord) throws ApduExitException {
+            this.baData = baData;;                                                             // avoids a lot of new and dispose operations.
+            this.sExcuse = sStatusWord;
+            throw this;
+        }
+
+        public void Throw(short sStatusWord) throws ApduExitException {
+            this.baData = null;
+            this.sExcuse = sStatusWord;
+            throw this;
+        }
+
+    }
+
+    protected static final ApduExitException ApduException = new ApduExitException();
+
+
+
+
+
+
+
+
+
     public static class SW {                                                                        // Status words
         public static final short NO_ERROR                       = (short)0x9000;                   // No Error
         public static final short BYTES_REMAINING_00             = (short)0x6100;                   // Response bytes remaining
@@ -312,6 +351,7 @@ public abstract class VCard {
         public static final short WARNING_STATE_UNCHANGED        = (short)0x6200;                   // Warning, card state unchanged
         public static final short LAST_COMMAND_EXPECTED          = (short)0x6883;                   // Last command in chain expected
         public static final short COMMAND_CHAINING_NOT_SUPPORTED = (short)0x6884;                   // Command chaining not supported
+        public static final short AUTHENTICATION_FAILURE         = (short)0x6300;                   // (Not a JC standard name/value) Home brew.
     }
 
     public static class ISO7816 {                                                                  // ISO7816 constants
