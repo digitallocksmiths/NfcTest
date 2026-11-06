@@ -16,3 +16,6 @@ local.properties
 
 # Script run logs
 Scripts/**/*.Log
+
+# Source artwork
+/*.svg
