@@ -21,6 +21,6 @@ public class ExampleInstrumentedTest {
     public void useAppContext() {
         // Context of the app under test.
         Context appContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        assertEquals("com.digitallocksmiths.nfctest1", appContext.getPackageName());
+        assertEquals("com.digitallocksmiths.sodor", appContext.getPackageName());
     }
 }

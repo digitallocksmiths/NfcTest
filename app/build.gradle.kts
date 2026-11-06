@@ -9,7 +9,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.digitallocksmiths.nfctest1"
+        applicationId = "com.digitallocksmiths.sodor"
         minSdk = 24
         targetSdk = 37
         versionCode = 1
