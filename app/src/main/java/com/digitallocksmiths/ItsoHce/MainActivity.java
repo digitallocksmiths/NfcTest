@@ -3,6 +3,7 @@ package com.digitallocksmiths.ItsoHce;
 import android.content.ComponentName;
 import android.nfc.NfcAdapter;
 import android.nfc.cardemulation.CardEmulation;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
@@ -62,6 +63,10 @@ public class MainActivity extends AppCompatActivity {
         } else {
             tv.append("NFC HCE Service is active.\n");
             tv.append("AID: A0000002164954534F2D31\n");
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {                      // Android 15+: the Wallet app's observe mode
+                tv.append("Note: background taps are blocked by the Wallet app "                      //      silences HCE unless we are in the foreground
+                        + "(e.g. Google Wallet). Keep this app open when tapping.\n");
+            }
         }
 
         try {
