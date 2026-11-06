@@ -39,6 +39,11 @@ public class Utility {
      */
     public static boolean checkStorageAccessPermissions(Context context)
     {   //Only for Android M and above.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            // READ_EXTERNAL_STORAGE is never granted from Android 13; app-specific
+            // directories need no permission, so don't block the dialog on it.
+            return true;
+        }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
             String permission = "android.permission.READ_EXTERNAL_STORAGE";
             int res = context.checkCallingOrSelfPermission(permission);
