@@ -360,7 +360,31 @@ public class Cmd11 extends VCard {
     // ========================================
     public void Dispose() {                                                                         // Card disposal
         Log.d(TAG, "Dispose");
-        // ToDo: Overwrite keys, passwords, session key and challenges here.
+
+        Scrub(mAuthDesKeyA);                                                                        // Raw key material
+        Scrub(mAuthDesKeyB);                                                                        //
+        Scrub(mAuthPseudoKeyA);                                                                     //
+        Scrub(mAuthPseudoKeyB);                                                                     //
+        mAuthDesKeyA = mAuthDesKeyB = mAuthPseudoKeyA = mAuthPseudoKeyB = null;                     //
+
+        DesKeyA       = Destroy(DesKeyA);                                                           // Key objects
+        DesKeyB       = Destroy(DesKeyB);                                                           //
+        DesKeyPseudoA = Destroy(DesKeyPseudoA);                                                     //
+        DesKeyPseudoB = Destroy(DesKeyPseudoB);                                                     //
+        SessionKey    = Destroy(SessionKey);                                                        //
+
+        if (aPassword != null) {                                                                    // Passwords
+            for (Password password : aPassword) {                                                   //
+                if (password != null) { Scrub(password.baBody); }                                   //
+            }                                                                                       //
+        }                                                                                           //
+
+        Scrub(baChallenge);                                                                         // Session state
+        Scrub(baChallengeTemp);                                                                     //
+        Scrub(baCSS);                                                                               //
+        Hash.reset();                                                                               //      APDU hash holds session traffic
+        fAuthenticated       = false;                                                               //
+        fPseudoAuthenticated = false;                                                               //
     }
 
     // =============================================================================================    Select (abstract implementation)

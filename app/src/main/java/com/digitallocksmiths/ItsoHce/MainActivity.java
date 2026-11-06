@@ -69,10 +69,13 @@ public class MainActivity extends AppCompatActivity {
             throw new RuntimeException(e);
         }
 
-        if (!bRestored) {
-            tv.append("Running: " + vcard.NameGet()  + ": " + vcard.TitleGet() + "\n");
-        }
+        ShowTitle();
+    }
 
+    private void ShowTitle() {                                                                      // bold title line above the log shows the card's name
+        TextView tvTitle = findViewById(R.id.txtTitle);
+        if (vcard == null) { tvTitle.setText(R.string.title_no_card); }
+        else { tvTitle.setText(getString(R.string.title_card, vcard.NameGet(), vcard.TitleGet())); }
     }
 
     @Override
@@ -126,7 +129,7 @@ public class MainActivity extends AppCompatActivity {
         try {
             vcard = VCard.ImageImportJson(szJsonFilename);
             Print("Image load: " + vcard.szFilename + "\n");
-            Print("Running: " + vcard.NameGet() + ": " + vcard.TitleGet() + "\n");
+            ShowTitle();
             return;
         }
         catch (VCard.VirtualCardException e) {
@@ -142,6 +145,7 @@ public class MainActivity extends AppCompatActivity {
         catch (VCard.VirtualCardException e) {
             // this will not happen but it keeps the compiler happy!
         }
+        ShowTitle();
     }
 
     private void ExportImage(String szJsonFilename) {

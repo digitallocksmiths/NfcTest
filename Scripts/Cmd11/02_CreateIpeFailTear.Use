@@ -162,6 +162,7 @@ Rx      = @ApduB("PIMO", 904A000004 00040020 00);
 var Sig = Rx[..¬2];
 
 @PrintLn(" ************ No Commit  *********************");
+
     @ResetA.warm;
 
 @PrintLn("Media Select");

@@ -29,6 +29,7 @@ import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.DESedeKeySpec;
+import javax.security.auth.DestroyFailedException;
 
 public abstract class VCard {
     private static final String TAG = "VCard";
@@ -578,6 +579,18 @@ public abstract class VCard {
     }
 
 
+    protected static void Scrub(byte[] ba) {                                                        // overwrite a buffer, null safe
+        if (ba != null) { java.util.Arrays.fill(ba, (byte)0); }
+    }
+
+    protected static SecretKey Destroy(SecretKey key) {                                             // destroy a key if the provider allows it
+        if (key != null) {                                                                          //      SecretKeySpec & DESede keys usually refuse,
+            try { key.destroy(); }                                                                  //      so the best we can do then is drop the reference.
+            catch (DestroyFailedException e) { /* not supported by this key type */ }
+        }
+        return null;
+    }
+
     protected SecretKey ConstructDesKey(byte[] baKeyMaterial) {
         byte[] baFullSizeKey;
 
@@ -604,6 +617,11 @@ public abstract class VCard {
         catch (Exception e) {
             Log.e(TAG, "MakeKey: " + e.getMessage());
             return null;
+        }
+        finally {
+            if (baFullSizeKey != baKeyMaterial) {                                                   // scrub our padded copy; the caller owns baKeyMaterial
+                Scrub(baFullSizeKey);
+            }
         }
     }
 
