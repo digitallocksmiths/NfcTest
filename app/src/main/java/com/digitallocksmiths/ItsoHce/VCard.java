@@ -9,8 +9,6 @@ import android.util.Log;
 
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -86,10 +84,9 @@ public abstract class VCard {
     //      One-off setup called by the owning application.
     //      Called on application load.
     // ===============================================
-    public static void Initialize(String szImageDirectory, String szOldImageDirectory) throws VirtualCardException {          // set up the key store and image storage.
+    public static void Initialize(String szImageDirectory) throws VirtualCardException {                                       // set up the key store and image storage.
         szImageRoot = szImageDirectory.endsWith(File.separator) ? szImageDirectory : szImageDirectory + File.separator;
         new File(szImageRoot).mkdirs();
-        if (szOldImageDirectory != null) { MoveImageRoot(new File(szOldImageDirectory)); }          // images used to live in public storage
         try {
             keyStore = KeyStore.getInstance(szKeyStore);
             keyStore.load(null);
@@ -101,64 +98,6 @@ public abstract class VCard {
             Log.d(TAG, "Key store load went tits up");
             throw new VCard.VirtualCardException("VCard: Key store load went tits up");
         }
-        KeyDelete(szFileNameA);                                                                     // the app-wide keys used before keys were per card
-        KeyDelete(szFileNameB);
-        MigrateLegacyImage();                                                                       // a pre-multicard image moves into its own card directory
-    }
-
-    // ===============================================
-    // MoveImageRoot:
-    //      One-off move of the card store from its old
-    //      (public) directory into szImageRoot.
-    //      The directories are on different file systems,
-    //      so it copies then deletes. A card already in
-    //      szImageRoot wins; its old copy is just deleted.
-    //      Keys are named by card id, not path, so moved
-    //      images still decrypt.
-    // ===============================================
-    private static void MoveImageRoot(File oldRoot) {
-        File[] entries = oldRoot.listFiles();
-        if (entries == null) { return; }                                                            // nothing to move
-        for (File entry : entries) {
-            File target = new File(szImageRoot + entry.getName());
-            File moving = new File(szImageRoot + entry.getName() + ".moving");                     // copy here, then rename: target is never half a copy
-            TreeDelete(moving);                                                                     //      left by an interrupted earlier attempt
-            if (target.exists() || (TreeCopy(entry, moving) && moving.renameTo(target))) {
-                TreeDelete(entry);                                                                  // no image left in public storage
-                Log.d(TAG, "MoveImageRoot: moved " + entry.getName());
-            } else {
-                TreeDelete(moving);                                                                 // try again next start-up
-                Log.d(TAG, "MoveImageRoot: failed to move " + entry.getName());
-            }
-        }
-        oldRoot.delete();                                                                           // only succeeds once it is empty
-    }
-
-    private static boolean TreeCopy(File from, File to) {
-        if (from.isDirectory()) {
-            File[] children = from.listFiles();
-            if ((children == null) || (!to.mkdirs() && !to.isDirectory())) { return false; }
-            for (File child : children) {
-                if (!TreeCopy(child, new File(to, child.getName()))) { return false; }
-            }
-            return true;
-        }
-        try (FileInputStream in = new FileInputStream(from); FileOutputStream out = new FileOutputStream(to)) {
-            byte[] baChunk = new byte[4096];
-            for (int n; (n = in.read(baChunk)) > 0; ) { out.write(baChunk, 0, n); }
-            return true;
-        }
-        catch (IOException e) {
-            return false;
-        }
-    }
-
-    private static void TreeDelete(File file) {
-        File[] children = file.listFiles();                                                         // null for a plain file
-        if (children != null) {
-            for (File child : children) { TreeDelete(child); }
-        }
-        file.delete();
     }
 
     // ===============================================
@@ -461,29 +400,6 @@ public abstract class VCard {
         if (!tmp.renameTo(new File(szImageRoot + szActiveCard))) {
             throw new VirtualCardException("Error setting active card");
         }
-    }
-
-    private static void MigrateLegacyImage() {                                                      // single image in the root (pre-multicard) => its own card
-        File fileA = new File(szImageRoot + szFileNameA);
-        File fileB = new File(szImageRoot + szFileNameB);
-        if (!fileA.exists() && !fileB.exists()) { return; }
-
-        VCard vc = ImageLoad(new Nvm(szImageRoot));
-        if (vc == null) {
-            Log.d(TAG, "MigrateLegacyImage: unreadable, left in place");
-            return;
-        }
-        String szCardId = vc.CardIdGet();
-        vc.Dispose();
-        File dir = new File(szImageRoot + szCardId);
-        dir.mkdirs();
-        if (fileA.exists()) { fileA.renameTo(new File(dir, szFileNameA)); }
-        if (fileB.exists()) { fileB.renameTo(new File(dir, szFileNameB)); }
-        if (ActiveCardGet() == null) {
-            try                             { ActiveCardSet(szCardId); }
-            catch (VirtualCardException e)  { Log.d(TAG, "MigrateLegacyImage: " + e.getMessage()); }
-        }
-        Log.d(TAG, "MigrateLegacyImage: moved to card " + szCardId);
     }
 
     // =============================================================================================

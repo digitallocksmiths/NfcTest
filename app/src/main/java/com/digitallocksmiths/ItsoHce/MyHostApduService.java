@@ -23,7 +23,6 @@ public class MyHostApduService extends HostApduService {
     private String GetAppPrivateDirectory() { return getFilesDir().getPath(); }                                         // this is where secret files are stored.
     private String GetAppPublicDirectory()  { return Objects.requireNonNull(getExternalFilesDir(null)).getPath(); }     // this is where the json profiles are stored.
     private String GetImageDirectory()      { return GetAppPrivateDirectory() + File.separator + "Image"; }             // this is where the images are stored.
-    private String GetOldImageDirectory()   { return GetAppPublicDirectory() + File.separator + "Image"; }              // where they used to be: moved on start-up.
 
 
 
@@ -32,7 +31,7 @@ public class MyHostApduService extends HostApduService {
         super.onCreate();
         Log.d(TAG, "Service created");
         try {
-            VCard.Initialize(GetImageDirectory(), GetOldImageDirectory());                          // set up the classes NVM (once only)
+            VCard.Initialize(GetImageDirectory());                                                  // set up the classes NVM (once only)
         } catch (VCard.VirtualCardException e) {
             throw new RuntimeException(e);
         }
