@@ -352,6 +352,17 @@ public class Cmd11 extends VCard {
         fUsingPseudoShellUID = (baPseudoShell != null && baPseudoShell.length > 0);                 // if we have a pseudo shell, we are "using it".
     }
 
+    // =============================================================================================    Dispose (abstract implementation)
+    // ========================================
+    // Dispose()
+    //      overwrite secret data before the
+    //      instance is left to the GC.
+    // ========================================
+    public void Dispose() {                                                                         // Card disposal
+        Log.d(TAG, "Dispose");
+        // ToDo: Overwrite keys, passwords, session key and challenges here.
+    }
+
     // =============================================================================================    Select (abstract implementation)
     // ========================================
     // Select()

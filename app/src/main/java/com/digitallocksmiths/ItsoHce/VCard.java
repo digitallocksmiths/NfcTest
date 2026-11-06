@@ -266,6 +266,7 @@ public abstract class VCard {
     protected abstract void     JsonParse(JSONObject jsonCardImage)  throws JSONException, VirtualCardException; // parse the JSON image into the CM Image
     protected abstract void     JsonExport(JSONObject jsonCardImage) throws JSONException;          // Make a Json String of the CM Image
     protected abstract void     Reset()                              throws VirtualCardException;   // Called on Reset.
+    protected abstract void     Dispose();                                                          // Overwrite secrets before the instance is abandoned to the GC.
     protected abstract byte[]   Select(byte[] baAid);                                               // build the FCI's A5 TLV.
     protected abstract byte[]   Dispatch(byte[] baApdu);                                            // Process the incoming APDU
 

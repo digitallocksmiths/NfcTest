@@ -75,6 +75,15 @@ public class MainActivity extends AppCompatActivity {
 
     }
 
+    @Override
+    protected void onDestroy() {
+        if (vcard != null) {                                                                        // scrub the secrets before the GC gets them
+            vcard.Dispose();
+            vcard = null;
+        }
+        super.onDestroy();
+    }
+
     private static final String LOG_TEXT_KEY = "logText";
 
     @Override
@@ -110,6 +119,10 @@ public class MainActivity extends AppCompatActivity {
 
 
     private void ImportImage(String szJsonFilename) {
+        if (vcard != null) {                                                                        // every path below replaces the image,
+            vcard.Dispose();                                                                        //      so scrub the old one first
+            vcard = null;
+        }
         try {
             vcard = VCard.ImageImportJson(szJsonFilename);
             Print("Image load: " + vcard.szFilename + "\n");

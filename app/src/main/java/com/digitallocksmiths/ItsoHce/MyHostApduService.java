@@ -31,23 +31,19 @@ public class MyHostApduService extends HostApduService {
         super.onCreate();
         Log.d(TAG, "Service created");
         try {
-            VCard.Initialize(GetImageDirectory());                                                  // set up the classes NVM
-            // vcard = VCard.FactoryImageLoad();                                                       // load the CM image.
-            // vcard.Reset();
+            VCard.Initialize(GetImageDirectory());                                                  // set up the classes NVM (once only)
         } catch (VCard.VirtualCardException e) {
             throw new RuntimeException(e);
         }
     }
 
     @Override
-    public void onDeactivated(int reason) {                                                         // deselect or deactivate
+    public void onDeactivated(int reason) {                                                         // link loss (field off) or deselect
         Log.d(TAG, "Service deactivated: " + reason);
-        //try {
-        //    vcard.Reset();
-        //}
-        //catch (VCard.VirtualCardException e) {
-        //    Log.d(TAG, "Reset(): " + e.getMessage());
-        // }
+        if (vcard != null) {                                                                        // end of session:
+            vcard.Dispose();                                                                        //      scrub the secrets
+            vcard = null;                                                                           //      drop the image so the next SELECT reloads it
+        }
     }
 
     @Override
@@ -74,14 +70,22 @@ public class MyHostApduService extends HostApduService {
             commandApdu[3] == (byte) 0x00)    {
                 Log.d(TAG, "SELECT AID detected");
                 try {
-                    VCard.Initialize(GetImageDirectory());                                          // set up the classes NVM
-                    vcard = VCard.FactoryImageLoad();                                               // load the CM image.
-                    vcard.Reset();
+                    if (vcard != null) {                                                            // a (re)select is a warm reset:
+                        vcard.Dispose();                                                            //      scrub the current image
+                        vcard = null;
+                    }
+                    vcard = VCard.FactoryImageLoad();                                               //      reload the CM image
+                    vcard.Reset();                                                                  //      and clear the 'RAM' variables
                     byte[] baAid    = Arrays.copyOfRange(commandApdu, 5, 5 + commandApdu[4]);       // Get the AID we answered to
                     byte[] baFci    = vcard.Select(baAid);                                          // Do the selection and get the FCI in response.
                     return VCard.Response(baFci, VCard.SW.NO_ERROR);                                // return it with the happy message.
                 } catch (VCard.VirtualCardException e) {
-                    throw new RuntimeException(e);
+                    Log.d(TAG, "SELECT failed: " + e.getMessage());
+                    if (vcard != null) {                                                            // don't run on a half-loaded image
+                        vcard.Dispose();
+                        vcard = null;
+                    }
+                    return VCard.Response(VCard.SW.APPLET_SELECT_FAILED);
                 }
         }
 

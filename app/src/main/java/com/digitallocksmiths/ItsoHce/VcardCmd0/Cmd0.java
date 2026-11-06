@@ -89,6 +89,16 @@ public class Cmd0 extends VCard {
     }
 
     // ========================================
+    // Dispose()
+    //      overwrite secret data before the
+    //      instance is left to the GC.
+    // ========================================
+    public void Dispose() {                                                                         // Card disposal
+        Log.d(TAG, "Dispose");
+        // ToDo: Overwrite keys and other secrets here.
+    }
+
+    // ========================================
     // Select()
     //      Construct and return the FCI
     // ========================================
