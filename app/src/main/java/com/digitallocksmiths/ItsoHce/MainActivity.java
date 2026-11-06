@@ -74,7 +74,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         try {
-            VCard.Initialize(GetImageDirectory());                                                      // set up the classes NVM
+            VCard.Initialize(GetImageDirectory(), GetOldImageDirectory());                              // set up the classes NVM
             vcard = VCard.FactoryImageLoad(VCard.ActiveCardGet());                                      // Load the active CM image
         } catch (VCard.VirtualCardException e) {
             Log.d(TAG, "onCreate: Trouble loading image: " + e.getMessage());
@@ -160,7 +160,8 @@ public class MainActivity extends AppCompatActivity {
     private String szCardSnapshot  = "SnapshotImage.json";
     private String GetAppPrivateDirectory() { return this.getFilesDir().getPath(); }
     private String GetAppPublicDirectory()  { return Objects.requireNonNull(getExternalFilesDir(null)).getPath(); }
-    private String GetImageDirectory()      { return Objects.requireNonNull(getExternalFilesDir(null)).getPath() + File.separator + "Image"; }
+    private String GetImageDirectory()      { return GetAppPrivateDirectory() + File.separator + "Image"; }     // card images: private storage
+    private String GetOldImageDirectory()   { return GetAppPublicDirectory()  + File.separator + "Image"; }     // where they used to be: moved on start-up
 
 
     private void ImportImage(String szJsonFilename) {

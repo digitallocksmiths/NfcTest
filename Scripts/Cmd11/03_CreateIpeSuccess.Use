@@ -28,6 +28,7 @@ u8  IpeNo  = 01;
 u8  IpeKas = 01;
 
 @debug(Directory);
+var _ShellE = Shell[18_d];
 
 @PrintLn(" ************ Verify Directory *******************");
 Rx = @ApduB("WSAM Dir", 9040 0002 ((u8)(2 + Directory.Length)) ((u16)Directory.Length)  Directory);
@@ -74,7 +75,7 @@ Msg = LogE_Orphan Log;
 Rx = @ApduB("WSAM LOG", 9040 0002 ((u8)(2 + Msg.length)) ((u16)(Msg)) Msg);
 @Assert(Rx[¬1..] == 9000, "WSAM");
 
-Rx = @ApduB("CREATE_IPE", 9052 07 00 01 IpeKas 00);
+Rx = @ApduB("CREATE_IPE", 9052 (_ShellE-1) 00 01 IpeKas 00);
 @Assert(Rx[¬1..] == 9000, "Create IPE");
 SectorPwdLog = Rx[2..9];
 
@@ -88,7 +89,24 @@ var SignedLog = Rx[5..¬2];
 
 @PrintLn(" ************ Seal Directory *********************");
 
-var newDir = 0021 IpeEntry 0000000000 0000000000 0000000000 0000000000 0000000000 0000000000 LogEntry 000000000110FF00000254E8F12156C677B4;
+//var newDir = 0021 IpeEntry 0000000000 0000000000 0000000000 0000000000 0000000000 0000000000 LogEntry 000000000110FF00000254E8F12156C677B4;
+var _D1 = Directory[0..(2 + 5 *(IpeNo-1))-1];   // -1 'cos it's inclusive
+var _D2 = IpeEntry;                              
+var _D3 = Directory[(2 + 5 *IpeNo)..((2 + 5 *(_ShellE-1))-1) ];   // -1 'cos it's inclusive
+var _D4 = LogEntry;
+var _D5 = Directory[(2 + 5 *(_ShellE))..];
+var newDir = _D1 _D2 _D3 _D4 _D5;
+
+@Debug(Shell);
+@Debug(Directory);
+@Debug(_ShellE);
+@Debug(_D1);
+@Debug(_D2);
+@Debug(_D3);
+@Debug(_D4);
+@Debug(_D5);
+@Debug(newDir);
+
 
 Rx = @ApduB("WSAM Directory", 9040 0002 ((u8)(2 + newDir.length)) ((u16)newDir.length)  newDir);
 @Assert(Rx[¬1..] == 9000, "WSAM");
@@ -177,16 +195,16 @@ var IsamProof = Rx[..¬2];
 
 @PrintLn(" ************ Check the change is persistent *********************");
 
-@ResetA;
+@ResetA.warm;
 
 @PrintLn("Media Select");
-Aid      = @Itso.Aid;
-Select   = 00A40400 Aid.Length Aid;
-var _Fci = @ApduA(Select);
+Aid    = @Itso.Aid;
+Select = 00A40400 Aid.Length Aid;
+Fci    = @ApduA(Select);
 @Assert(Fci[¬1..] == 9000, "Select OK?");
 
-@PrintLn("Parsing the FCI");               @Debug(_Fci);    
-var _Body_6F      = @Tlv(6F, _Fci);        @Debug(_Body_6F);
+@PrintLn("Parsing the FCI");          @Debug(Fci);    
+var _Body_6F      = @Tlv(6F, Fci);         @Debug(_Body_6F);
 var _Body_A5      = @Tlv(A5, _Body_6F);    @Debug(_Body_A5);
 var _Shell        = @Tlv(C0, _Body_A5);    @Debug(_Shell);
 var _Capabilities = @Tlv(C1, _Body_A5);    @Debug(_Capabilities);
