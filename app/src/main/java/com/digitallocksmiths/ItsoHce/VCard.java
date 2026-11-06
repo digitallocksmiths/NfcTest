@@ -28,10 +28,12 @@ import com.digitallocksmiths.ItsoHce.VcardCmd2.Cmd2;
 import com.digitallocksmiths.ItsoHce.VcardCmd11.Cmd11;
 import com.digitallocksmiths.ItsoHce.VcardCmd12.Cmd12;
 
+import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.DESedeKeySpec;
+import javax.crypto.spec.GCMParameterSpec;
 import javax.security.auth.DestroyFailedException;
 
 public abstract class VCard {
@@ -47,13 +49,14 @@ public abstract class VCard {
     static final String szFileNameA  = "VCardImageA";
     static final String szFileNameB  = "VCardImageB";
     static final String szActiveCard = "ActiveCard";                    // file in the image root holding the active card's id
+    static final String szImageCipher = "AES/GCM/NoPadding";            // image file encryption
+    static final int    iGcmIvSize    = 12;                             // bytes of IV at the start of an image file
+    static final int    iGcmTagSize   = 16;                             // bytes of GCM tag at its end
 
 
     // Shared by all cards                                              // one key store and one image root per app
     private   static  String      szImageRoot;                          // each card lives in szImageRoot/<UID as hex>/
-    private   static  KeyStore    keyStore;                             // The key storage for the image.
-    private   static  SecretKey   KeyB;                                 // The key used to encrypt the imageB.
-    private   static  SecretKey   KeyA;                                 // The key used to encrypt the imageA.
+    private   static  KeyStore    keyStore;                             // The key storage for the images: one key per card per shadow.
 
     // Image save/restore variables                                     // per card
     protected         Nvm         nvm;                                  // The memory storage for this card's image (null until first saved).
@@ -87,30 +90,66 @@ public abstract class VCard {
         try {
             keyStore = KeyStore.getInstance(szKeyStore);
             keyStore.load(null);
-            KeyA = (SecretKey) keyStore.getKey(szFileNameA, null);                                  // using file name as the key alias here
-            KeyB = (SecretKey) keyStore.getKey(szFileNameB, null);                                  // same again.
-            if ((KeyA == null) || (KeyB == null)) {
-                KeyGenerator keyGen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, szKeyStore);
-                keyGen.init(new KeyGenParameterSpec.Builder(szFileNameA, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT).build());
-                keyGen.generateKey();
-                KeyA = (SecretKey) keyStore.getKey(szFileNameA, null);
-                keyGen.init(new KeyGenParameterSpec.Builder(szFileNameB, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT).build());
-                keyGen.generateKey();
-                KeyB = (SecretKey) keyStore.getKey(szFileNameB, null);
-            }
         }
         catch (  java.security.cert.CertificateException |
                  java.io.IOException |
                  java.security.KeyStoreException |
-                 java.security.NoSuchAlgorithmException |
-                 java.security.UnrecoverableKeyException |
-                 java.security.InvalidAlgorithmParameterException |
-                 java.security.NoSuchProviderException |
-                 java.security.InvalidParameterException e ) {
-            Log.d(TAG, "Key load went tits up");
-            throw new VCard.VirtualCardException("VCard: Key load went tits up");
+                 java.security.NoSuchAlgorithmException e ) {
+            Log.d(TAG, "Key store load went tits up");
+            throw new VCard.VirtualCardException("VCard: Key store load went tits up");
         }
+        KeyDelete(szFileNameA);                                                                     // the app-wide keys used before keys were per card
+        KeyDelete(szFileNameB);
         MigrateLegacyImage();                                                                       // a pre-multicard image moves into its own card directory
+    }
+
+    // ===============================================
+    // Image keys:
+    //      every card has its own key for each shadow,
+    //      held in the AndroidKeyStore under the alias
+    //      <card id>.VCardImageA|B
+    // ===============================================
+    private static String KeyAlias(String szCardId, short AorB) {
+        return szCardId + "." + ((AorB == Shadow.A) ? szFileNameA : szFileNameB);
+    }
+
+    private static String KeyCardId(Nvm cardNvm) {                                                  // the card directory's name is the card id
+        return new File(cardNvm.szImageDir).getName();
+    }
+
+    private static SecretKey KeyGet(String szAlias, boolean fCreate) throws VirtualCardException {  // null if absent and not created
+        try {
+            SecretKey key = (SecretKey) keyStore.getKey(szAlias, null);
+            if ((key == null) && fCreate) {
+                KeyGenerator keyGen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, szKeyStore);
+                keyGen.init(new KeyGenParameterSpec.Builder(szAlias, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+                        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)                                // AES/GCM/NoPadding, as the image encryption will use
+                        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                        .setKeySize(256)
+                        .build());
+                key = keyGen.generateKey();
+                Log.d(TAG, "KeyGet: created " + szAlias);
+            }
+            return key;
+        }
+        catch (java.security.GeneralSecurityException | java.security.ProviderException e) {
+            Log.d(TAG, "KeyGet: " + szAlias + ": " + e.getMessage());
+            throw new VirtualCardException("VCard: key access failed: " + szAlias);
+        }
+    }
+
+    private static void KeyDelete(String szAlias) {
+        try {
+            if (keyStore.containsAlias(szAlias)) { keyStore.deleteEntry(szAlias); }
+        }
+        catch (java.security.KeyStoreException e) {
+            Log.d(TAG, "KeyDelete: " + szAlias + ": " + e.getMessage());
+        }
+    }
+
+    private static void KeysDelete(String szCardId) {                                               // both shadows' keys
+        KeyDelete(KeyAlias(szCardId, Shadow.A));
+        KeyDelete(KeyAlias(szCardId, Shadow.B));
     }
 
 
@@ -258,6 +297,7 @@ public abstract class VCard {
 
             vc.nvm = new Nvm(szImageRoot + vc.CardIdGet());                                         // parsing went well so this UID's directory
             vc.nvm.WipeDirectory();                                                                 //      loses any older image of the same card
+            KeysDelete(vc.CardIdGet());                                                             //      and its keys: the new image gets fresh ones
             vc.ImageSave();                                                                         // Now save the new one.
 
             vc.szFilename = file.getName();
@@ -430,6 +470,7 @@ public abstract class VCard {
         nvm.WipeDirectory();
         if (!new File(nvm.szImageDir).delete()) { Log.d(TAG, "ImageDelete: directory not removed"); }
         nvm = null;
+        KeysDelete(szCardId);                                                                       // the image's keys go with it
 
         if (szCardId.equals(ActiveCardGet())) {                                                     // the default card has gone: promote another, if any
             ArrayList<CardInfo> cards = CardList();
@@ -646,10 +687,8 @@ public abstract class VCard {
 
         switch (AorB) {
             case Shadow.A:  baBuffer = cardNvm.Read(szFileNameA);                                              // Read the encrypted file
-                key      = KeyA;
                 break;
             case Shadow.B:  baBuffer = cardNvm.Read(szFileNameB);
-                key      = KeyB;
                 break;
             default:        throw new IllegalStateException("FileReadEncryptedBuffer: Unexpected value: " + AorB);
         }
@@ -658,25 +697,32 @@ public abstract class VCard {
             Log.d(TAG, "FileReadEncryptedBuffer: File not found");
             return null;
         }
-        if (key == null) {
+        String szAlias = KeyAlias(KeyCardId(cardNvm), AorB);
+        try {
+            key = KeyGet(szAlias, false);                                                           // reading never creates a key
+        }
+        catch (VirtualCardException e) {
+            key = null;
+        }
+        if (key == null) {                                                                          // no key: the image cannot be decrypted
             Log.d(TAG, "FileReadEncryptedBuffer: Key not found");
             return null;
         }
 
-        // ToDo: Decrypt here
-        //try {
-        //    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        //    cipher.init(Cipher.DECRYPT_MODE, Key);
-        //    baA = cipher.doFinal(ba);                                                             // decrypted file
-        //}
-        //catch (java.security.NoSuchAlgorithmException |
-        //       javax.crypto.NoSuchPaddingException |
-        //       java.security.InvalidKeyException |
-        //       javax.crypto.BadPaddingException |
-        //       javax.crypto.IllegalBlockSizeException ex) {
-        //    Log.d(TAG, "Decrypt A cocked up");
-        //    baA = new byte[0];
-        //}
+        if (baBuffer.length < iGcmIvSize + iGcmTagSize) {
+            Log.d(TAG, "FileReadEncryptedBuffer: File too short");
+            return null;
+        }
+        try {                                                                                       // file = IV : ciphertext : tag
+            Cipher cipher = Cipher.getInstance(szImageCipher);
+            cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(iGcmTagSize * 8, baBuffer, 0, iGcmIvSize));
+            cipher.updateAAD(szAlias.getBytes(StandardCharsets.UTF_8));                             // the file must belong to this card and shadow
+            baBuffer = cipher.doFinal(baBuffer, iGcmIvSize, baBuffer.length - iGcmIvSize);          // decrypted image; a bad tag throws
+        }
+        catch (java.security.GeneralSecurityException | java.security.ProviderException e) {
+            Log.d(TAG, "FileReadEncryptedBuffer: Decrypt failed: " + e.getMessage());
+            return null;
+        }
 
         if (ChecksumVerify(baBuffer)) {
             return ByteBuffer.wrap(baBuffer);
@@ -692,33 +738,49 @@ public abstract class VCard {
     //      append the checksum and encrypt the buffer.
     //      Then save it to the appropriate file.
     //
-    //      not the key change to endure the same key
-    //      is not used for the predictably variable file.
+    //      AES-GCM with the card's key for this shadow.
+    //      The Keystore picks a fresh random IV for
+    //      every save, so the key can be reused safely.
+    //      The key alias is the AAD, binding the file
+    //      to its card and shadow.
+    //      File = IV(12) : ciphertext : tag(16)
     // ===============================================
     private static void FileWriteEncryptedBuffer(Nvm cardNvm, short AorB, ByteBuffer buffer)  throws VCard.VirtualCardException, Exception {
         String      szFilename;
         SecretKey   key;
 
-        // ToDo: New Key
         switch (AorB) {
             case Shadow.A: szFilename = szFileNameA;                                              // Write the encrypted file
-                key        = KeyA;
                 break;
             case Shadow.B: szFilename = szFileNameB;
-                key      = KeyB;
                 break;
             default:        throw new IllegalStateException("FileWriteEncryptedBuffer: Unexpected value: " + AorB);
         }
+        String szAlias = KeyAlias(KeyCardId(cardNvm), AorB);
+        key = KeyGet(szAlias, true);                                                                // this card's key for this shadow, made on first save
 
         byte[] baBlob = buffer.array();                                                             // construction is complete
         buffer.put(ChecksumCalculate(baBlob));                                                      // Add the checksum
 
-        // ToDo: Encrypt here
-        //try {
-        //    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");                              // encrypted buffer
-        //    cipher.init(Cipher.ENCRYPT_MODE, key);
-        //    baBlob = cipher.doFinal(baBlob);
-        cardNvm.Write(szFilename, baBlob);                                                              // Write the encrypted file
+        byte[] baFile;
+        try {
+            Cipher cipher = Cipher.getInstance(szImageCipher);
+            cipher.init(Cipher.ENCRYPT_MODE, key);                                                  // the Keystore chooses the IV
+            cipher.updateAAD(szAlias.getBytes(StandardCharsets.UTF_8));
+            byte[] baIv     = cipher.getIV();
+            byte[] baCipher = cipher.doFinal(baBlob);                                               // ciphertext : tag
+            baFile = new byte[baIv.length + baCipher.length];
+            arraycopy(baIv,     0, baFile, 0,           baIv.length);
+            arraycopy(baCipher, 0, baFile, baIv.length, baCipher.length);
+        }
+        catch (java.security.GeneralSecurityException | java.security.ProviderException e) {
+            Log.d(TAG, "FileWriteEncryptedBuffer: Encrypt failed: " + e.getMessage());
+            throw new VirtualCardException("VCard: image encryption failed");
+        }
+        finally {
+            Scrub(baBlob);                                                                          // don't leave the plain image to the GC
+        }
+        cardNvm.Write(szFilename, baFile);                                                          // Write the encrypted file
     }
 
     public    static final byte SerializeOverhead = (byte)5;
