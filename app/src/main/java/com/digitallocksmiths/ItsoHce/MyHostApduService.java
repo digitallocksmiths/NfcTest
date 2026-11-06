@@ -74,7 +74,7 @@ public class MyHostApduService extends HostApduService {
                         vcard.Dispose();                                                            //      scrub the current image
                         vcard = null;
                     }
-                    vcard = VCard.FactoryImageLoad();                                               //      reload the CM image
+                    vcard = VCard.FactoryImageLoad(VCard.ActiveCardGet());                          //      reload the active card's image
                     vcard.Reset();                                                                  //      and clear the 'RAM' variables
                     byte[] baAid    = Arrays.copyOfRange(commandApdu, 5, 5 + commandApdu[4]);       // Get the AID we answered to
                     byte[] baFci    = vcard.Select(baAid);                                          // Do the selection and get the FCI in response.

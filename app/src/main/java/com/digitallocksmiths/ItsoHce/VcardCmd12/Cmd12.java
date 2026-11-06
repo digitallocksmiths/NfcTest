@@ -17,8 +17,8 @@ public class Cmd12 extends VCard {
     // Constructor
     //
     // ========================================
-    public Cmd12()  throws VCard.VirtualCardException {
-        super();
+    public Cmd12(byte[] baShell)  throws VCard.VirtualCardException {
+        super(baShell);
         NameSet("CMD 12");
     }
 

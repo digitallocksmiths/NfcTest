@@ -12,6 +12,7 @@ import android.widget.TextView;
 
 import androidx.activity.EdgeToEdge;
 import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
@@ -24,6 +25,7 @@ import com.github.angads25.filepicker.model.DialogProperties;
 import com.github.angads25.filepicker.view.FilePickerDialog;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Objects;
 
 public class MainActivity extends AppCompatActivity {
@@ -50,6 +52,7 @@ public class MainActivity extends AppCompatActivity {
 
         findViewById(R.id.buttonLoad).setOnClickListener(this::LoadButton);
         findViewById(R.id.buttonSave).setOnClickListener(this::SaveButton);
+        findViewById(R.id.buttonCards).setOnClickListener(this::CardsButton);
         findViewById(R.id.buttonClose).setOnClickListener(this::CloseButton);
 
         TextView tv = findViewById(R.id.txtquestion);
@@ -71,7 +74,7 @@ public class MainActivity extends AppCompatActivity {
 
         try {
             VCard.Initialize(GetImageDirectory());                                                      // set up the classes NVM
-            vcard = VCard.FactoryImageLoad();                                                           // Load the active CM image
+            vcard = VCard.FactoryImageLoad(VCard.ActiveCardGet());                                      // Load the active CM image
         } catch (VCard.VirtualCardException e) {
             Log.d(TAG, "onCreate: Trouble loading image: " + e.getMessage());
             throw new RuntimeException(e);
@@ -166,7 +169,8 @@ public class MainActivity extends AppCompatActivity {
         }
         try {
             vcard = VCard.ImageImportJson(szJsonFilename);
-            Print("Image load: " + vcard.szFilename + "\n");
+            VCard.ActiveCardSet(vcard.CardIdGet());                                                 // an imported card becomes the default
+            Print("Image load: " + vcard.szFilename + " (card " + vcard.CardIdGet() + ")\n");
             ShowTitle();
             return;
         }
@@ -189,6 +193,9 @@ public class MainActivity extends AppCompatActivity {
     private void ExportImage(String szJsonFilename) {
         if (vcard != null) {
             try {
+                    vcard.Dispose();                                                                // the service may have updated the image since we
+                    vcard = null;                                                                   //      loaded it, so export a fresh copy from NVM
+                    vcard = VCard.FactoryImageLoad(VCard.ActiveCardGet());
                     vcard.ImageExportJson(szJsonFilename);
                     //Print("Image save: " + vcard.szSavedAsFilename + "\n");
             }
@@ -229,6 +236,55 @@ public class MainActivity extends AppCompatActivity {
 
         });
         dialog.show();
+    }
+
+    // =================================
+    // Cards Button
+    //      pick the default card: the one
+    //      the service presents to readers.
+    // =================================
+
+    public void CardsButton(View v) {
+        Log.d(TAG, "BUTTONS: User tapped the CardsButton");
+        ArrayList<VCard.CardInfo> cards = VCard.CardList();
+        if (cards.isEmpty()) {
+            Print("No cards stored. Use Load to import one.\n");
+            return;
+        }
+
+        String   szActive = VCard.ActiveCardGet();
+        String[] aszItems = new String[cards.size()];
+        int      iChecked = -1;
+        for (int i = 0; i < cards.size(); i++) {
+            VCard.CardInfo card = cards.get(i);
+            aszItems[i] = getString(R.string.title_card, card.szName, card.szTitle);                // szName: szTitle
+            if (card.szId.equals(szActive)) { iChecked = i; }
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.cards_picker_title)
+                .setSingleChoiceItems(aszItems, iChecked, (dialog, which) -> {
+                    dialog.dismiss();
+                    SelectCard(cards.get(which));
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void SelectCard(VCard.CardInfo card) {
+        if (vcard != null) {                                                                        // scrub the card we are leaving
+            vcard.Dispose();
+            vcard = null;
+        }
+        try {
+            VCard.ActiveCardSet(card.szId);                                                         // the service picks it up on the next SELECT
+            vcard = VCard.FactoryImageLoad(card.szId);
+            Print("Default card: " + card.szName + ": " + card.szTitle + " (" + card.szId + ")\n");
+        }
+        catch (VCard.VirtualCardException e) {
+            Print("VirtualCardException: " + e.getMessage() + "\n");
+        }
+        ShowTitle();
     }
 
     public void SaveButton(View v) {

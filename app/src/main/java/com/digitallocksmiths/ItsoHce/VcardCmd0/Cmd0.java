@@ -2,7 +2,6 @@ package com.digitallocksmiths.ItsoHce.VcardCmd0;
 
 import android.util.Log;
 
-import com.digitallocksmiths.ItsoHce.Itso.Shell;
 import com.digitallocksmiths.ItsoHce.VCard;
 
 import org.json.JSONException;
@@ -16,19 +15,18 @@ public class Cmd0 extends VCard {
 
     private JSONObject szJsonCardImage = null;
 
+    // CMD0 is the default so it brings its own shell; the others are given theirs.
+    private static final byte[] baCmd0Shell = { 24, 1, 99, 53, -105, 0,  0,  0,
+                                                 0, 0,  7,  0,    0, 0,  0,  0,
+                                                 0, 0,  0,  0,    0, 0, 32, 54 };                   // FVC 0 shell
+
     // ========================================
     // Constructor
     //
     // ========================================
     public Cmd0() throws VCard.VirtualCardException {
-        super();
+        super(baCmd0Shell.clone());
         NameSet("CMD 0");
-
-        // CMD0 is the default so the following would have been set for all except this CMD.
-        baShell = new byte[] { 24, 1, 99, 53, -105, 0,  0,  0,
-                                0, 0,  7,  0,    0, 0,  0,  0,
-                                0, 0,  0,  0,    0, 0, 32, 54 };                                    // FVC 0 shell
-        shell   = new Shell(baShell);
     }
 
     // ========================================

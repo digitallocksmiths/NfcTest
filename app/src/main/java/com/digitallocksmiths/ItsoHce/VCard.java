@@ -7,13 +7,16 @@ import android.security.keystore.KeyProperties;
 import android.util.Base64;
 import android.util.Log;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.security.KeyStore;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Scanner;
 
 import org.json.JSONException;
@@ -40,30 +43,35 @@ public abstract class VCard {
     //
 
     // Image Filenames/identifiers
-    static final String szKeyStore  = "AndroidKeyStore";
-    static final String szFileNameA = "VCardImageA";
-    static final String szFileNameB = "VCardImageB";
+    static final String szKeyStore   = "AndroidKeyStore";
+    static final String szFileNameA  = "VCardImageA";
+    static final String szFileNameB  = "VCardImageB";
+    static final String szActiveCard = "ActiveCard";                    // file in the image root holding the active card's id
 
 
-    // Image save/restore variables                                     // Static because we only have one file/one AID
-    protected static  Nvm         nvm;                                  // The memory storage for the image.
+    // Shared by all cards                                              // one key store and one image root per app
+    private   static  String      szImageRoot;                          // each card lives in szImageRoot/<UID as hex>/
     private   static  KeyStore    keyStore;                             // The key storage for the image.
     private   static  SecretKey   KeyB;                                 // The key used to encrypt the imageB.
     private   static  SecretKey   KeyA;                                 // The key used to encrypt the imageA.
-    private   static  int         iAgeA = 0;                            // The age of Image A
-    private   static  int         iAgeB = 0;                            // The age of Image B
+
+    // Image save/restore variables                                     // per card
+    protected         Nvm         nvm;                                  // The memory storage for this card's image (null until first saved).
+    private           int         iAgeA = 0;                            // The age of Image A
+    private           int         iAgeB = 0;                            // The age of Image B
 
     public            String      szFilename        = null;             // Name of the file we've read JSON stuff from.
-    public    static  Shell       shell;
+    public            Shell       shell;
 
     // ==================================================
     // Image variables used in this superclass.
     // Stored and recovered from the image file vis the
     // serializer functions.
-    private static  int         iAge = 0;                               // age of this file ( monotonic counter or updates.)
-    public  static  byte[]      baShell = new byte[24];                 // will/must be 0x18 bytes (i.e. no MCRN)
-    public  static  byte[]      baName  = new byte[32];                 // space for the title of the card.
-    public  static  byte[]      baTitle = new byte[32];                 // space for the title of the card.
+    private         int         iAge = 0;                               // age of this file ( monotonic counter or updates.)
+    public          byte[]      baShell;                                // will/must be 0x18 bytes (i.e. no MCRN)
+    public          byte[]      baName  = new byte[32];                 // space for the name of the card.
+    public          byte[]      baTitle = new byte[32];                 // space for the title of the card.
+    private static final int    iShellSize    = 24;                     // size of baShell in the image.
     private final   int         iNvmSizeSuper = 92;                     // size of the above savable data.
 
 
@@ -74,7 +82,8 @@ public abstract class VCard {
     //      Called on application load.
     // ===============================================
     public static void Initialize(String szImageDirectory) throws VirtualCardException {                                       // set up the key store and image storage.
-        nvm      = new Nvm(szImageDirectory);
+        szImageRoot = szImageDirectory.endsWith(File.separator) ? szImageDirectory : szImageDirectory + File.separator;
+        new File(szImageRoot).mkdirs();
         try {
             keyStore = KeyStore.getInstance(szKeyStore);
             keyStore.load(null);
@@ -101,6 +110,7 @@ public abstract class VCard {
             Log.d(TAG, "Key load went tits up");
             throw new VCard.VirtualCardException("VCard: Key load went tits up");
         }
+        MigrateLegacyImage();                                                                       // a pre-multicard image moves into its own card directory
     }
 
 
@@ -108,54 +118,94 @@ public abstract class VCard {
 
     // ===============================================
     // base class constructor:
-    //      Little to do here!
+    //      Every card owns its shell.
     //
     // ===============================================
-    public VCard() throws VCard.VirtualCardException {                                              // constructor invoked via subclass.
+    public VCard(byte[] baShell) throws VCard.VirtualCardException {                                // constructor invoked via subclass.
+        this.baShell = baShell;
+        this.shell   = new Shell(baShell);
         TitleSet("Uninitialized Card Image");
+    }
+
+    private static VCard Construct(byte[] baShell) throws VirtualCardException {                    // create the sub-class for this shell's FVC
+        switch (new Shell(baShell).getFvc()) {
+            case 0x02:  return new Cmd2(baShell);
+            case 0x0B:  return new Cmd11(baShell);
+            case 0x0C:  return new Cmd12(baShell);
+            default:    return new Cmd0();
+        }
+    }
+
+
+    // ===============================================
+    // Card identity:
+    //      A card is identified by its UID as a hex
+    //      string.
+    //      Cards without a UID fall back to the ISRN.
+    // ===============================================
+    protected byte[] UidGet() { return null; }                                                      // subclasses with a UID override this
+
+    public String CardIdGet() {
+        byte[] baUid = UidGet();
+        return HexString(((baUid != null) && (baUid.length > 0)) ? baUid : shell.getIsrn());
+    }
+
+    private static String HexString(byte[] ba) {
+        StringBuilder sb = new StringBuilder();
+        for (byte b : ba) { sb.append(String.format("%02X", b)); }
+        return sb.toString();
     }
 
 
     // ===============================================
     // FactoryLoadImage:
-    //      read the encrypted image file then create
-    //      and return the appropriate sub-class.
-    //
+    //      read the card's encrypted image file then
+    //      create and return the appropriate sub-class.
+    //      A missing or unreadable card gives CMD0.
     // ===============================================
-    public static VCard FactoryImageLoad() throws VirtualCardException {                             // power up card
-
-        ByteBuffer bufferA = FileReadEncryptedBuffer(Shadow.A);
-        ByteBuffer bufferB = FileReadEncryptedBuffer(Shadow.B);
-        ByteBuffer buffer  = null;
-
-        iAgeA = iAgeB = 0;
-        if ((bufferA != null) && (bufferA.remaining() >= 4)) { iAgeA = bufferA.getInt();  }         // read the images Age (first 4 bytes)
-        if ((bufferB != null) && (bufferB.remaining() >= 4)) { iAgeB = bufferB.getInt();  }
-
-        if (iAgeA > iAgeB)              { iAge = iAgeA; buffer = bufferA; }
-        else                            { iAge = iAgeB; buffer = bufferB; }
-
-        VCard vc;
-        if (((iAgeA != 0) || (iAgeB != 0)) && (buffer != null)) {
-            try {
-                buffer.get(baShell);                                                                // Read the image's Shell;
-                shell = new Shell(baShell);                                                         // Parse the Shell
-                switch (shell.getFvc()) {
-                    case 0x02:  vc = new Cmd2(); break;
-                    case 0x0B:  vc = new Cmd11(); break;
-                    case 0x0C:  vc = new Cmd12(); break;
-                    default:    vc = new Cmd0(); break;
-                }
-                buffer.get(baName);                                                                 //                  Name;
-                buffer.get(baTitle);                                                                //                  Title;
-                vc.ImageDeserialize(buffer);
-                return vc;
-            }
-            catch (Exception e) {
-                Log.d(TAG, "FactoryImageLoad: parser failed");                                      // in development, we use 'get' exceptions to recognize faulty images
+    public static VCard FactoryImageLoad(String szCardId) throws VirtualCardException {             // power up card
+        if (szCardId != null) {
+            File dir = new File(szImageRoot + szCardId);
+            if (dir.isDirectory()) {                                                                // don't let Nvm create a directory for an unknown card
+                VCard vc = ImageLoad(new Nvm(dir.getPath()));
+                if (vc != null) { return vc; }
             }
         }
         return new Cmd0();
+    }
+
+    private static VCard ImageLoad(Nvm cardNvm) {                                                   // null if neither shadow holds a valid image
+        int[]      aiAge  = new int[2];
+        ByteBuffer buffer = ImageNewest(cardNvm, aiAge);
+        if (buffer != null) {
+            try {
+                byte[] baShell = new byte[iShellSize];
+                buffer.get(baShell);                                                                // Read the image's Shell;
+                VCard vc = Construct(baShell);                                                      //      the shell picks the sub-class
+                buffer.get(vc.baName);                                                              //                  Name;
+                buffer.get(vc.baTitle);                                                             //                  Title;
+                vc.ImageDeserialize(buffer);
+                vc.nvm   = cardNvm;
+                vc.iAgeA = aiAge[0];
+                vc.iAgeB = aiAge[1];
+                vc.iAge  = Math.max(aiAge[0], aiAge[1]);
+                return vc;
+            }
+            catch (Exception e) {
+                Log.d(TAG, "ImageLoad: parser failed");                                             // in development, we use 'get' exceptions to recognize faulty images
+            }
+        }
+        return null;
+    }
+
+    private static ByteBuffer ImageNewest(Nvm cardNvm, int[] aiAge) {                               // the newer of the A/B shadows, positioned after its age
+        ByteBuffer bufferA = FileReadEncryptedBuffer(cardNvm, Shadow.A);
+        ByteBuffer bufferB = FileReadEncryptedBuffer(cardNvm, Shadow.B);
+        aiAge[0] = aiAge[1] = 0;
+        if ((bufferA != null) && (bufferA.remaining() >= 4)) { aiAge[0] = bufferA.getInt();  }      // read the images Age (first 4 bytes)
+        if ((bufferB != null) && (bufferB.remaining() >= 4)) { aiAge[1] = bufferB.getInt();  }
+        if ((aiAge[0] == 0) && (aiAge[1] == 0)) { return null; }
+        return (aiAge[0] > aiAge[1]) ? bufferA : bufferB;
     }
 
     // ===============================================
@@ -165,22 +215,24 @@ public abstract class VCard {
     //
     // ===============================================
     public void ImageSave() throws VirtualCardException,  VirtualCardException, Exception {
+        if (nvm == null) { nvm = new Nvm(szImageRoot + CardIdGet()); }                              // first save: the card's directory is named by its UID
         ByteBuffer buffer = ByteBuffer.allocate(iNvmSizeSuper + ImageGetSize() + 4);        // accumulator for the saved image  super+sub+crc
         buffer.putInt(++iAge);                                                                      // Add super's elements first.  iAge +
         buffer.put(baShell);                                                                        //                              baShell.
         buffer.put(baName);                                                                         //                              baName.
         buffer.put(baTitle);                                                                        //                              baTitle.
         ImageSerialize(buffer);                                                                     // next let the subclass serialize its image
-        if (iAgeA > iAgeB) { iAgeB = iAge; FileWriteEncryptedBuffer(Shadow.B, buffer); }            // helper for encrypting and saving the image
-        else               { iAgeA = iAge; FileWriteEncryptedBuffer(Shadow.A, buffer); }
+        if (iAgeA > iAgeB) { iAgeB = iAge; FileWriteEncryptedBuffer(nvm, Shadow.B, buffer); }       // helper for encrypting and saving the image
+        else               { iAgeA = iAge; FileWriteEncryptedBuffer(nvm, Shadow.A, buffer); }
     }
 
     // ===============================================
     // ImageImportJson:
-    //      Erase the current image and read a new JSON file VCard description.
+    //      Read a JSON file VCard description and store it
+    //      as a card. A card with the same UID is replaced.
     //
     // ===============================================
-    public static VCard ImageImportJson(String szJsonFilename) throws JSONException, VirtualCardException {                  // erase old image and create new one from Json description.
+    public static VCard ImageImportJson(String szJsonFilename) throws JSONException, VirtualCardException {                  // create a card from a Json description.
         File   file;
         String szJson;
         JSONObject jsonCardImage;
@@ -199,27 +251,16 @@ public abstract class VCard {
         }
 
         try {
-            VCard vc;
-
-            baShell = DecodeJsonByteArray(jsonCardImage, "baShell");
-            shell   = new Shell(baShell);
-
-            switch (shell.getFvc()) {                                                               // Create the appropriate sub-class
-                case 2:  vc = new Cmd2();   break;
-                case 11: vc = new Cmd11();  break;
-                case 12: vc = new Cmd12();  break;
-                default: vc = new Cmd0();   break;
-            }
+            VCard vc = Construct(DecodeJsonByteArray(jsonCardImage, "baShell"));                    // Create the appropriate sub-class
             vc.NameSet(jsonCardImage.getString("szName"));
             vc.TitleSet(jsonCardImage.getString("szTitle"));
             vc.JsonParse(jsonCardImage);                                                            // let it parse itself
 
-            nvm.WipeDirectory();                                                                    // parsing went well so delete the old image
-
-            iAge = iAgeA = iAgeB = 0;
+            vc.nvm = new Nvm(szImageRoot + vc.CardIdGet());                                         // parsing went well so this UID's directory
+            vc.nvm.WipeDirectory();                                                                 //      loses any older image of the same card
             vc.ImageSave();                                                                         // Now save the new one.
 
-           vc.szFilename = file.getName();
+            vc.szFilename = file.getName();
             return vc;
         }
         catch (Exception e) {
@@ -258,8 +299,94 @@ public abstract class VCard {
         }
     };
 
-    // reset needs to do this...
-    // vcard = VCard.FactoryImageLoad();
+
+    // =============================================================================================
+    // Card store
+    //      szImageRoot/<card id>/VCardImageA|B     one directory per card
+    //      szImageRoot/ActiveCard                  id of the card the service presents
+    //
+
+    public static class CardInfo {                                                                  // what the card picker shows
+        public final String szId;
+        public final String szName;
+        public final String szTitle;
+        CardInfo(String szId, String szName, String szTitle) { this.szId = szId; this.szName = szName; this.szTitle = szTitle; }
+    }
+
+    public static ArrayList<CardInfo> CardList() {                                                  // all stored cards, in id order
+        ArrayList<CardInfo> cards = new ArrayList<>();
+        File[] dirs = new File(szImageRoot).listFiles(File::isDirectory);
+        if (dirs == null) { return cards; }
+        Arrays.sort(dirs);
+        for (File dir : dirs) {
+            CardInfo info = ImagePeek(dir.getName());
+            if (info != null) { cards.add(info); }
+        }
+        return cards;
+    }
+
+    private static CardInfo ImagePeek(String szCardId) {                                            // read just the name and title, no secrets
+        ByteBuffer buffer = ImageNewest(new Nvm(szImageRoot + szCardId), new int[2]);
+        if (buffer == null) { return null; }
+        try {
+            byte[] baName  = new byte[32];
+            byte[] baTitle = new byte[32];
+            buffer.position(buffer.position() + iShellSize);                                        // skip the shell
+            buffer.get(baName);
+            buffer.get(baTitle);
+            return new CardInfo(szCardId, new String(baName,  StandardCharsets.UTF_8).trim(),
+                                          new String(baTitle, StandardCharsets.UTF_8).trim());
+        }
+        catch (Exception e) {
+            return null;
+        }
+    }
+
+    public static String ActiveCardGet() {                                                          // null if none chosen yet
+        try (BufferedReader reader = new BufferedReader(new FileReader(szImageRoot + szActiveCard))) {
+            String szCardId = reader.readLine();
+            return ((szCardId == null) || szCardId.trim().isEmpty()) ? null : szCardId.trim();
+        }
+        catch (IOException e) {
+            return null;
+        }
+    }
+
+    public static void ActiveCardSet(String szCardId) throws VirtualCardException {                 // write then rename, so a reader never sees half a file
+        File tmp = new File(szImageRoot + szActiveCard + ".tmp");
+        try (FileWriter writer = new FileWriter(tmp)) {
+            writer.write(szCardId);
+        }
+        catch (IOException e) {
+            throw new VirtualCardException("Error writing active card");
+        }
+        if (!tmp.renameTo(new File(szImageRoot + szActiveCard))) {
+            throw new VirtualCardException("Error setting active card");
+        }
+    }
+
+    private static void MigrateLegacyImage() {                                                      // single image in the root (pre-multicard) => its own card
+        File fileA = new File(szImageRoot + szFileNameA);
+        File fileB = new File(szImageRoot + szFileNameB);
+        if (!fileA.exists() && !fileB.exists()) { return; }
+
+        VCard vc = ImageLoad(new Nvm(szImageRoot));
+        if (vc == null) {
+            Log.d(TAG, "MigrateLegacyImage: unreadable, left in place");
+            return;
+        }
+        String szCardId = vc.CardIdGet();
+        vc.Dispose();
+        File dir = new File(szImageRoot + szCardId);
+        dir.mkdirs();
+        if (fileA.exists()) { fileA.renameTo(new File(dir, szFileNameA)); }
+        if (fileB.exists()) { fileB.renameTo(new File(dir, szFileNameB)); }
+        if (ActiveCardGet() == null) {
+            try                             { ActiveCardSet(szCardId); }
+            catch (VirtualCardException e)  { Log.d(TAG, "MigrateLegacyImage: " + e.getMessage()); }
+        }
+        Log.d(TAG, "MigrateLegacyImage: moved to card " + szCardId);
+    }
 
     protected abstract int      ImageGetSize();                                                     // subclasses indicate their own storage volume requirements
     protected abstract void     ImageDeserialize(ByteBuffer buffer)  throws VirtualCardException;   // subclasses populate their working variables here.
@@ -455,16 +582,16 @@ public abstract class VCard {
     //      Read an image file with the appropriate key.
     //      decrypt it and convert it to a ByteBuffer.
     // ===============================================
-    private static ByteBuffer FileReadEncryptedBuffer(short AorB)  {
+    private static ByteBuffer FileReadEncryptedBuffer(Nvm cardNvm, short AorB)  {
 
         byte[]      baBuffer;
         SecretKey   key;
 
         switch (AorB) {
-            case Shadow.A:  baBuffer = nvm.Read(szFileNameA);                                              // Read the encrypted file
+            case Shadow.A:  baBuffer = cardNvm.Read(szFileNameA);                                              // Read the encrypted file
                 key      = KeyA;
                 break;
-            case Shadow.B:  baBuffer = nvm.Read(szFileNameB);
+            case Shadow.B:  baBuffer = cardNvm.Read(szFileNameB);
                 key      = KeyB;
                 break;
             default:        throw new IllegalStateException("FileReadEncryptedBuffer: Unexpected value: " + AorB);
@@ -511,7 +638,7 @@ public abstract class VCard {
     //      not the key change to endure the same key
     //      is not used for the predictably variable file.
     // ===============================================
-    private static void FileWriteEncryptedBuffer(short AorB, ByteBuffer buffer)  throws VCard.VirtualCardException, Exception {
+    private static void FileWriteEncryptedBuffer(Nvm cardNvm, short AorB, ByteBuffer buffer)  throws VCard.VirtualCardException, Exception {
         String      szFilename;
         SecretKey   key;
 
@@ -534,7 +661,7 @@ public abstract class VCard {
         //    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");                              // encrypted buffer
         //    cipher.init(Cipher.ENCRYPT_MODE, key);
         //    baBlob = cipher.doFinal(baBlob);
-        nvm.Write(szFilename, baBlob);                                                              // Write the encrypted file
+        cardNvm.Write(szFilename, baBlob);                                                              // Write the encrypted file
     }
 
     public    static final byte SerializeOverhead = (byte)5;

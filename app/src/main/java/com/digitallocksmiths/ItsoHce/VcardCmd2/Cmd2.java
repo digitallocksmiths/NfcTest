@@ -14,8 +14,8 @@ public class Cmd2 extends VCard {
     private static final String TAG = "Cmd2";
 
     // Constructor
-    public Cmd2()  throws VCard.VirtualCardException {
-        super();
+    public Cmd2(byte[] baShell)  throws VCard.VirtualCardException {
+        super(baShell);
         NameSet("CMD 2");
     }
 

@@ -111,8 +111,8 @@ public class Cmd11 extends VCard {
     // Constructor
     //
     // ========================================
-    public Cmd11()  throws VCard.VirtualCardException {
-        super();
+    public Cmd11(byte[] baShell)  throws VCard.VirtualCardException {
+        super(baShell);
         NameSet("CMD 11");
 
         int iE = shell.getE();
@@ -145,6 +145,13 @@ public class Cmd11 extends VCard {
         // also safe disposal of replaced data structures.
     }                                                                                               // Exit with all space allocated, to be populated later.
 
+
+    // ========================================
+    // UidGet()
+    //    The card's UID identifies it in the card store.
+    // ========================================
+    @Override
+    protected byte[] UidGet() { return baUID; }
 
     // ========================================
     // ImageGetSize()
@@ -316,7 +323,7 @@ public class Cmd11 extends VCard {
         EncodeJsonByteArray(jsonCardImage, "baLog",           TTLog.baBody);
         JSONArray ipeList = new JSONArray();
         for (int i = 1; i < shell.getE(); i++) {
-            if (directory.E_Empty(i)) {
+            if (!directory.E_Empty(i)) {                                                            // only occupied IPEs are exported
                 JSONObject ipe = new JSONObject();
                 EncodeJsonByteArray(ipe, "baIpe", getIpe(i));
                 EncodeJsonByteArray(ipe, "baVrg", getVrg(i));
