@@ -1,5 +1,8 @@
 package com.digitallocksmiths.ItsoHce;
 
+import android.content.ComponentName;
+import android.nfc.NfcAdapter;
+import android.nfc.cardemulation.CardEmulation;
 import android.os.Bundle;
 import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
@@ -76,6 +79,36 @@ public class MainActivity extends AppCompatActivity {
         TextView tvTitle = findViewById(R.id.txtTitle);
         if (vcard == null) { tvTitle.setText(R.string.title_no_card); }
         else { tvTitle.setText(getString(R.string.title_card, vcard.NameGet(), vcard.TitleGet())); }
+    }
+
+    // =============================================================================================
+    // AID routing
+    //      While we are in the foreground our HCE service is the preferred
+    //      handler for its AIDs, so another app registering the ITSO AID
+    //      cannot trigger the chooser or steal the tap.
+    //
+    private CardEmulation GetCardEmulation() {                                                      // null if the device has no NFC
+        NfcAdapter adapter = NfcAdapter.getDefaultAdapter(this);
+        return (adapter != null) ? CardEmulation.getInstance(adapter) : null;
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        CardEmulation cardEmulation = GetCardEmulation();
+        if (cardEmulation != null) {
+            boolean f = cardEmulation.setPreferredService(this, new ComponentName(this, MyHostApduService.class));
+            Log.d(TAG, "setPreferredService: " + f);
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        CardEmulation cardEmulation = GetCardEmulation();
+        if (cardEmulation != null) {
+            cardEmulation.unsetPreferredService(this);                                              // hand AID routing back to the system
+        }
+        super.onPause();
     }
 
     @Override
