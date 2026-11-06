@@ -350,10 +350,6 @@ public class Cmd11 extends VCard {
         fAuthenticated       = false;
         fPseudoAuthenticated = false;
         fUsingPseudoShellUID = (baPseudoShell != null && baPseudoShell.length > 0);                 // if we have a pseudo shell, we are "using it".
-        //sFciStart            = 0;
-        //sFciA5LenOffset      = 0;
-        //sAllocated           = 0;
-
     }
 
     // =============================================================================================    Select (abstract implementation)
@@ -363,14 +359,6 @@ public class Cmd11 extends VCard {
     // ========================================
     public byte[] Select(byte[] baAid) {                                                            // *** Card select
         Log.d(TAG, "Select");                                                                       //
-        try {                                                                                       //
-            Reset();                                                                                // Clear on reset//select variables initialized.
-        }                                                                                           //
-        catch (VirtualCardException e) {                                                            //
-            Log.d(TAG, "Select: + " + e.getMessage() );                                             // report trouble if needed
-            return new byte[] { (byte)0x80, 1, 11};                                                 //
-        }                                                                                           //
-                                                                                                    //
         if (fUsingPseudoShellUID) { return WrapAsFci(baAid, FciBuildRandom()); }                    // Build FCI for random  UID host
         else                      { return WrapAsFci(baAid, FciBuildStatic()); }                    //               static  UID host
     }                                                                                               //
@@ -455,9 +443,9 @@ public class Cmd11 extends VCard {
         byte[] baOids = new byte[2 * (shell.getE()-1)];                                             //      make a list of the IPE owners.
         for (int i = 1; i < shell.getE()-1; i++) {                                                  //      One enty for each E/possible IPE
             short sOid = 0;                                                                         //
-            if (directory.E_Empty(i)) {                                                        //      used?
-                sOid = directory.E_Oid(i);                                                         //      get the OID (13 bits from directory.E[i])
-                if (directory.E_Ext(i)) {                                                             //      Do we need to extend the OID by the ISAM fudge factor?
+            if (!directory.E_Empty(i)) {                                                            //      used?
+                sOid = directory.E_Oid(i);                                                          //      get the OID (13 bits from directory.E[i])
+                if (directory.E_Ext(i)) {                                                           //      Do we need to extend the OID by the ISAM fudge factor?
                     int iOff = 2 + aIpe[i-1].baBody[0] & (byte)0xFC;                                //          Top bits are collected from the IPE's instance ID
                     switch (aIpe[i-1].baBody[iOff] & (byte)0x07) {                                  //          KID, ISAMID[4], (id-bits 18-16 are interesting)
                         case 4:                                                                     //                  100
@@ -466,7 +454,7 @@ public class Cmd11 extends VCard {
                         case 7: sOid |= (short)0xE000; break;                                       //                  111 => +0xE000
                     }                                                                               //
                 }                                                                                   //
-                baOids[(i-1)*2    ] = (byte)(sOid >> 8);                                            //      Add it to of table uder construction.
+                baOids[(i-1)*2    ] = (byte)(sOid >> 8);                                            //      Add it to of table under construction.
                 baOids[(i-1)*2 + 1] = (byte)sOid;                                                   //
             }                                                                                       //
         }                                                                                           //
@@ -698,10 +686,12 @@ public class Cmd11 extends VCard {
     // #
     // ##########################################################################
     private void DoReadIpe(byte[] baApdu)  throws ApduExitException {                                                       // *** DoReadIpe
-        int iIpeNo = (baApdu[ISO7816.OFFSET_P1] - 1) & 0xFF;
+        int iIpeNo = baApdu[ISO7816.OFFSET_P1] & 0xFF;
 
-        if ((iIpeNo > (shell.getE()-2)) || (baApdu[ISO7816.OFFSET_P2] != 0)) {						// Check IPE(1..E-1) & P2==0 before continuing
-            ApduException.Throw(SW.INCORRECT_P1P2);                                                 //      Oops. it's not
+        if ((iIpeNo == 0) ||                                                                        // Check != 0
+            (iIpeNo > (shell.getE()-1)) ||                                                          //       <= E-1
+            (baApdu[ISO7816.OFFSET_P2] != 0)) {                                                     //       P2 as prescribed, zero.
+                ApduException.Throw(SW.INCORRECT_P1P2);                                             //      Oops. it's not
         }                                                                                           //
 
         if ((baApdu.length < 5) || (baApdu[ISO7816.OFFSET_LC] != 0)) {							    // length = all.
@@ -709,15 +699,16 @@ public class Cmd11 extends VCard {
         }																                            //
 
         if (directory.E_Empty(iIpeNo)) {                                                            // Confirm the IPE is not empty
-            ApduException.Throw(SW.RECORD_NOT_FOUND);                                                   // Report "Record Not Found" as per spec.
+            ApduException.Throw(SW.RECORD_NOT_FOUND);                                               // Report "Record Not Found" as per spec.
         }
 
-        int iIpeSize         = (aIpe[iIpeNo].baBody[0] & 0xfC) + 16;                                // Size of IPE body + InstanceID + seal.
-        byte[] baDeliverable = new byte[5 + iIpeSize];                                              // Get the IPE
+        int iIpeSize         = (aIpe[iIpeNo-1].baBody[0] & 0xfC);                                   // Size of IPE body + InstanceID + seal.
+        byte[] baDeliverable = new byte[5 + iIpeSize + 16];                                         // Get the IPE
 
-        System.arraycopy(directory.getEntry(iIpeNo), 0, baDeliverable, 0, 5);                       // Dir entry +
-        System.arraycopy(aIpe[iIpeNo].baBody,        0, baDeliverable, 5, iIpeSize);                // Body + seal
-
+        System.arraycopy(directory.getEntry(iIpeNo), 0, baDeliverable, 0, 5);                                 // Dir entry +
+        if (fAuthenticated) { System.arraycopy(aIpe[iIpeNo - 1].baBody, 0, baDeliverable, 5, iIpeSize+16);  } // Auth : Body + seal
+        else                { System.arraycopy(aIpe[iIpeNo - 1].baBody, 0, baDeliverable, 5, iIpeSize);       //      : Body +
+                              Arrays.fill(baDeliverable, 5+iIpeSize, 5+iIpeSize+16, (byte)0xff); }            //      :        redacted
         ResponseHashedIfNecessary(baDeliverable, SW.NO_ERROR);
     }
 
@@ -745,26 +736,29 @@ public class Cmd11 extends VCard {
     // #
     // ##########################################################################
     private void DoReadVrg(byte[] baApdu) throws ApduExitException {                                                       // *** DoReadVrg
-        int  iIpeNo = (baApdu[ISO7816.OFFSET_P1] - 1) & 0xFF;
+        int iIpeNo = baApdu[ISO7816.OFFSET_P1] & 0xFF;
 
-        if ((iIpeNo > (shell.getE()-2)) || (baApdu[ISO7816.OFFSET_P2] != 0)) {						// Check IPE(1..E-1) & P2==0 before continuing
-            ApduException.Throw(SW.INCORRECT_P1P2);                                                 //      Oops. it's not
+        if ((iIpeNo == 0) ||                                                                        // Check != 0
+            (iIpeNo > (shell.getE()-1)) ||                                                          //       <= E-1
+            (baApdu[ISO7816.OFFSET_P2] != 0)) {                                                     //       P2 as prescribed, zero.
+                ApduException.Throw(SW.INCORRECT_P1P2);                                             //      Oops. it's not
         }                                                                                           //
 
         if ((baApdu.length < 5) || (baApdu[ISO7816.OFFSET_LC] != 0)) {							    // length = all.
             ApduException.Throw(SW.WRONG_LENGTH);			                                        //
         }																                            //
 
-        if (directory.E_Empty(iIpeNo) || !directory.HasVrg(iIpeNo)) {                               // Confirm the IPE is not empty and if full has a VRG
-            ApduException.Throw(SW.RECORD_NOT_FOUND);                                               //      Grief = "Record Not Found".
-        }                                                                                           //
+        if (directory.E_Empty(iIpeNo)) {                                                            // Confirm the IPE is not empty
+            ApduException.Throw(SW.RECORD_NOT_FOUND);                                               // Report "Record Not Found" as per spec.
+        }
 
-        int iVrgSize         = (aVrg[iIpeNo].baBody[0] & 0xfC) + 16;                                // Size of VRG body + InstanceID + seal.
-        byte[] baDeliverable = new byte[5 + iVrgSize];                                              // Get the VRG
+        int iVrgSize         = (aVrg[iIpeNo-1].baBody[0] & 0xfC);                                   // Size of VRG body + InstanceID + seal.
+        byte[] baDeliverable = new byte[5 + iVrgSize + 16];                                         // Get the VRG
 
-        System.arraycopy(directory.getEntry(iIpeNo), 0, baDeliverable, 0, 5);                       // Dir entry +
-        System.arraycopy(aVrg[iIpeNo].baBody,        0, baDeliverable, 5, iVrgSize);                // Body + seal
-
+        System.arraycopy(directory.getEntry(iIpeNo), 0, baDeliverable, 0, 5);                                 // Dir entry +
+        if (fAuthenticated) { System.arraycopy(aVrg[iIpeNo - 1].baBody, 0, baDeliverable, 5, iVrgSize+16);  } // Auth : Body + seal
+        else                { System.arraycopy(aVrg[iIpeNo - 1].baBody, 0, baDeliverable, 5, iVrgSize);       //      : Body +
+                              Arrays.fill(baDeliverable, 5+iVrgSize, 5+iVrgSize+16, (byte)0xff); }            //      :        redacted
         ResponseHashedIfNecessary(baDeliverable, SW.NO_ERROR);
     }
 

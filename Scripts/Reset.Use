@@ -1,0 +1,16 @@
+// !TestName: Reset
+//
+//  Test Description here
+//  more...
+//
+//  End of comments marks the end of this description.
+//    
+
+
+    @ResetA.cold;
+
+var Aid=A0000002164954534F2D31;
+
+var Apdu = 00A40400 @Length(Aid) Aid;
+
+var resp = @Apdu(Apdu);

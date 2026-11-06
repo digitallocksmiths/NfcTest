@@ -1,0 +1,237 @@
+// !TestName: Create Ipe & Log (Tear)
+//
+//  Tests the secure messageing and failure to commit
+//
+//  Expects Card on Reader 1 (A)
+//          ISAM in Reader 2 (B)
+//          Card to have an empty slot 1 for the new IPE.
+//
+//
+
+@Include ("01_Auth.Use");        // Sets variables including 'Directory'
+
+var IpeEntry = 440440A3CA;                                                                              // type 2 IPE
+var Vrg      = 23090000 @Itso.Dts 00000000000000000001000000000000000000000000000000 1088080000000000;
+var Ipe      = 1801FF1003600065 03E80F9F01F307D0 8F14000200000000 1088080000000000;
+
+var LogE_Orphan = 7F80000000;                                                                           // Orphan Entry for seal
+//var LogEntry  = 8412345600;                                                                           // Normal Log
+var LogEntry    = 8412344000 + (@Itso.Date + 10_d);                                                       // Normal Log
+var Log         = 1C0400FCC7A29E80009B0000CA000D5222000001CA000D522200000000FF000000000000;
+
+var Rx;
+var SectorPwdIpe;
+var SectorPwdVrg;
+var SectorPwdLog;
+var SectorPwdDir;
+u8  IpeNo  = 01;
+u8  IpeKas = 01;
+
+@debug(Directory);
+
+@PrintLn(" ************ Verify Directory *******************");
+Rx = @ApduB("WSAM Dir", 9040 0002 ((u8)(2 + Directory.Length)) ((u16)Directory.Length)  Directory);
+Rx = @ApduB("VERIFY_ITSO", 904E 0000 00 );
+@Assert(Rx[¬1..] == 9000, "Verify Directory");
+
+
+var Msg;
+@PrintLn(" ************ Create VRG *************************");
+Msg = IpeEntry Vrg;
+Rx = @ApduB("WSAM VRG", 9040 0002 ((u8)(2 + Msg.length)) ((u16)(Msg.length)) Msg);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx = @ApduB("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 IpeKas 00);
+@Assert(Rx[¬1..] == 9000, "CREATE_IPE");
+SectorPwdVrg = Rx[2..9];
+ 
+Rx = @ApduB("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx = @ApduB("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+var SignedVrg = Rx[5..¬2];
+
+@PrintLn(" ************ Create IPE *************************");
+Msg = IpeEntry Ipe;
+Rx = @ApduB("WSAM IPE", 9040 0002 ((u8)(2 + Msg.length)) ((u16)(Msg.length)) Msg);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx = @ApduB("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 IpeKas 00);
+@Assert(Rx[¬1..] == 9000, "Create IPE");
+SectorPwdIpe = Rx[2..9];
+
+Rx = @ApduB("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx = @ApduB("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+var SignedIpe = Rx[5..¬2];
+
+
+@PrintLn(" ************ Create LOG *************************");
+Msg = LogE_Orphan Log;
+Rx = @ApduB("WSAM LOG", 9040 0002 ((u8)(2 + Msg.length)) ((u16)(Msg)) Msg);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx = @ApduB("CREATE_IPE", 9052 07 00 01 IpeKas 00);
+@Assert(Rx[¬1..] == 9000, "Create IPE");
+SectorPwdLog = Rx[2..9];
+
+Rx = @ApduB("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx = @ApduB("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+var SignedLog = Rx[5..¬2];
+
+
+@PrintLn(" ************ Seal Directory *********************");
+
+var newDir = 0021 IpeEntry 0000000000 0000000000 0000000000 0000000000 0000000000 0000000000 LogEntry 000000000110FF00000254E8F12156C677B4;
+
+Rx = @ApduB("WSAM Directory", 9040 0002 ((u8)(2 + newDir.length)) ((u16)newDir.length)  newDir);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+Rx = @ApduB("WDIR", 9056 0000 01 01 00);
+@Assert(Rx[¬1..] == 9000, "WDIR");
+SectorPwdDir = Rx[2..9];
+
+Rx = @ApduB("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx = @ApduB("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+var SignedDir = Rx[..¬2];
+
+
+
+@Debug(SectorPwdIpe);
+@Debug(SectorPwdVrg);
+@Debug(SectorPwdLog);
+@Debug(SectorPwdDir);
+@Debug(Ipe);
+@Debug(SignedIpe);
+@Debug(Vrg);
+@Debug(SignedVrg);
+@Debug(Log);
+@Debug(SignedLog);
+@Debug(Directory);
+@Debug(SignedDir);
+
+var Tx;
+var HashAcc = @Sha256.init;
+
+
+@PrintLn(" ************ CMD11 Update Ipe *******************");
+Tx      = 9018 IpeNo 00 ((u8)(SectorPwdIpe.length + SignedIpe.length)) SectorPwdIpe SignedIpe;
+Rx      = @ApduA("Update Ipe", Tx);
+HashAcc = @Sha256.Update(HashAcc, Tx);
+HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == 9000, "UpdateIpe");
+
+@PrintLn(" ************ CMD11 Update Ipe *******************");
+Tx      = 901A IpeNo 00 ((u8)(SectorPwdVrg.length + SignedVrg.length)) SectorPwdVrg SignedVrg;
+Rx      = @ApduA("Update Vrg", Tx);
+HashAcc = @Sha256.Update(HashAcc, Tx);
+HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == 9000, "UpdateVrg");
+
+
+@PrintLn(" ************ CMD11 Update Log *******************");
+Tx      = 901C 0000 ((u8)(SectorPwdLog.length + SignedLog.length)) SectorPwdLog SignedLog;
+Rx      = @ApduA("Update Log", Tx);
+HashAcc = @Sha256.Update(HashAcc, Tx);
+HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == 9000, "UpdateLog");
+
+@PrintLn(" ************ CMD11 Update Dir *******************");
+Tx      = 901E 0000 ((u8)(SectorPwdDir.length + SignedDir.length)) SectorPwdDir SignedDir;
+Rx      = @ApduA("Update Dir", Tx);
+HashAcc = @Sha256.Update(HashAcc, Tx);
+HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == 9000, "UpdateDir");
+
+@PrintLn(" ************ Commit Calculation (no delivery) *********************");
+var Hash = @Sha256.Final(HashAcc);
+
+Rx      = @ApduB("WSAM", 9040 0002 ((u8)(2 + Hash.Length)) ((u16)Hash.Length) Hash);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx      = @ApduB("PIMO", 904A000004 00040020 00);
+@Assert(Rx[¬1..] == 9000, "PIMO");
+var Sig = Rx[..¬2];
+
+@PrintLn(" ************ No Commit  *********************");
+    @ResetA.warm;
+
+@PrintLn("Media Select");
+Aid    = @Itso.Aid;
+Select = 00A40400 Aid.Length Aid;
+Fci    = @ApduA(Select);
+@Assert(Fci[¬1..] == 9000, "Select OK?");
+
+@PrintLn("Parsing the FCI");          @Debug(Fci);    
+var _Body_6F      = @Tlv(6F, Fci);         @Debug(_Body_6F);
+var _Body_A5      = @Tlv(A5, _Body_6F);    @Debug(_Body_A5);
+var _Shell        = @Tlv(C0, _Body_A5);    @Debug(_Shell);
+var _Capabilities = @Tlv(C1, _Body_A5);    @Debug(_Capabilities);
+var _Directory    = @Tlv(C2, _Body_A5);    @Debug(_Directory);
+var _OidList      = @Tlv(C3, _Body_A5);    @Debug(_OidList);
+var _OldCSS       = @Tlv(C4, _Body_A5);    @Debug(_OldCSS);
+var _Challenge    = @Tlv(C5, _Body_A5);    @Debug(_Challenge);
+var _PseudoUid    = @Tlv(C6, _Body_A5);    @Debug(_PseudoUid);
+var _StaticUid    = @Tlv(C7, _Body_A5);    @Debug(_StaticUid);
+var _Kas1Kas2     = @Tlv(C8, _Body_A5);    @Debug(_Kas1Kas2);
+
+if (PseudoUid.Length != 0) {                                            // Did we get a PseudoUID?
+
+    @PrintLn("Isam End (pseudo session)");
+    var _End_Resp = @ApduB(90 58 00 00 00);
+    @Assert(_End_Resp[¬1..] == 9000, "End OK?");
+
+    @PrintLn("Isam Begin (Pseudo UID");
+    var _Begin_Body = @Itso.DateX _Shell _PseudoUid _Challenge;
+    var _Begin      = 90 48 00 Kas1Kas2[0] _Begin_Body.Length _Begin_Body  00;
+    var _Isam_Chal  = @ApduB(_Begin);
+    @Assert(_Isam_Chal[¬1..] == 9000, "Begin OK?");
+
+    @PrintLn("Media Authenticate (pseudo)");
+    var _Auth       = 90 10 00 00 (_Isam_Chal.Length-2)  _Isam_Chal[..¬2]  00;
+    var _Media_Resp = @ApduA(_Auth);
+    @Assert(_Media_Resp[¬1..] == 9000, "Authenticate OK?");
+
+    @PrintLn("Isam External Authenticate (pseudo)");
+    var _ExtAuth      = 00 82 00 _Kas1Kas2[1] (Media_Resp.Length - 2) _Media_Resp[..¬2];
+    var _ExtAuth_Resp = @ApduB(_ExtAuth);
+    @Assert(_ExtAuth_Resp[¬1..] == 9000, "External Authenticate OK?");
+
+    @PrintLn("Media Reselect");
+    var _Reselect_Resp = @ApduA(90 22 00 00 00);
+    @Assert(_Reselect_Resp[¬1..] == 9000, "Reselect OK?");
+
+    @PrintLn("Parsing the reselect FCI");   @Debug(_Reselect_Resp ); 
+    _Body_6F      = @Tlv(6F, _Reselect_Resp); @Debug(_Body_6F);
+    _Body_A5      = @Tlv(A5, _Body_6F);       @Debug(_Body_A5);
+    _Shell        = @Tlv(C0, _Body_A5);       @Debug(_Shell);
+    _Directory    = @Tlv(C2, _Body_A5);       @Debug(_Directory);
+    _OidList      = @Tlv(C3, _Body_A5);       @Debug(_OidList);
+    _Challenge    = @Tlv(C5, _Body_A5);       @Debug(_Challenge);
+    _StaticUid    = @Tlv(C7, _Body_A5);       @Debug(_StaticUid);
+    _Kas1Kas2     = @Tlv(C8, _Body_A5);       @Debug(_Kas1Kas2);
+
+    @PrintLn("Isam End (pseudo session)");
+    var End_Resp = @ApduB(90 58 00 00 00);
+    @Assert(End_Resp[¬1..] == 9000, "End OK?");
+}
+
+
+
+
+@Test(_Shell     == Shell,     "Shell unchanged");
+@Test(_Directory == Directory, "Directory unchanged");
+@Test(_OidList   == OidList,   "OidList unchanged");
+@Test(_OldCSS    == OldCSS,    "OldCSS unchanged");
+
+
+
+

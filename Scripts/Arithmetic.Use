@@ -1,0 +1,77 @@
+// !TestName: Arithmetic
+//
+//  Test Description here
+//  more...
+//
+//  End of comments marks the end of this description.
+//   
+
+//  @ResetA.cold;
+
+
+var Wibble = 80F1234C;
+var x      = 0;
+
+
+@trace("");
+@trace("=============================");
+@trace("Right Shift Signed");
+@trace("=============================");
+
+for (x = 0; x <= 20; x++) {
+   @trace( Wibble >>>  x);
+}
+
+
+@trace("");
+@trace("=============================");
+@trace("Right Shift Unsigned");
+@trace("=============================");
+
+for (x = 0; x <= 20; x++) {
+   @trace( Wibble >>  x);
+}
+
+
+@trace("");
+@trace("=============================");
+@trace("Left Shift");
+@trace("=============================");
+
+for (x = 0; x <= 20; x+=1) {
+   @trace( Wibble <<  x);
+}
+
+
+@trace("");
+@trace("=============================");
+@trace("Rotate Left");
+@trace("=============================");
+
+for (x = 0; x <= 20; x+=1) {
+   @trace( Wibble <-<  x);
+}
+
+
+@trace("");
+@trace("=============================");
+@trace("Rotate Right");
+@trace("=============================");
+
+for (x = 0; x <= 20; x+=1) {
+   @trace( Wibble >->  x);
+}
+
+@trace( "" );
+
+var foo = 1234567;
+@trace( foo );
+foo <-<= 1;
+@trace( foo );
+foo >->= 2;
+@trace( foo );
+foo <-<= 1;
+@trace( foo );
+
+
+

@@ -32,7 +32,8 @@ public class MyHostApduService extends HostApduService {
         Log.d(TAG, "Service created");
         try {
             VCard.Initialize(GetImageDirectory());                                                  // set up the classes NVM
-            vcard = VCard.FactoryImageLoad();                                                       // load the CM image.
+            // vcard = VCard.FactoryImageLoad();                                                       // load the CM image.
+            // vcard.Reset();
         } catch (VCard.VirtualCardException e) {
             throw new RuntimeException(e);
         }
@@ -72,9 +73,20 @@ public class MyHostApduService extends HostApduService {
             commandApdu[2] == (byte) 0x04 &&
             commandApdu[3] == (byte) 0x00)    {
                 Log.d(TAG, "SELECT AID detected");
-                byte[] baAid    = Arrays.copyOfRange(commandApdu, 5, 5 + commandApdu[4]);           // Get the AID we answered to
-                byte[] baFci    = vcard.Select(baAid);                                              // Do the selection and get the FCI in response.
-                return VCard.Response(baFci, VCard.SW.NO_ERROR);                                    // return it with the happy message.
+                try {
+                    VCard.Initialize(GetImageDirectory());                                          // set up the classes NVM
+                    vcard = VCard.FactoryImageLoad();                                               // load the CM image.
+                    vcard.Reset();
+                    byte[] baAid    = Arrays.copyOfRange(commandApdu, 5, 5 + commandApdu[4]);       // Get the AID we answered to
+                    byte[] baFci    = vcard.Select(baAid);                                          // Do the selection and get the FCI in response.
+                    return VCard.Response(baFci, VCard.SW.NO_ERROR);                                // return it with the happy message.
+                } catch (VCard.VirtualCardException e) {
+                    throw new RuntimeException(e);
+                }
+        }
+
+        if (vcard == null) {
+            return VCard.Response(VCard.SW.CLA_NOT_SUPPORTED);
         }
 
         // ToDo: Add sanity check here to ensure APDU is well formed one of 4 classes

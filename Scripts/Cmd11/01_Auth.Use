@@ -2,6 +2,9 @@
 //
 //  Copes with Static and Random UIDs
 //
+// If running this test as part of the full CMD11 set, you need to
+// start with an empty card. i.e. no IPEs.
+//
 //  Expects Card on Reader 1 (A)
 //          ISAM in Reader 2 (B)
 //

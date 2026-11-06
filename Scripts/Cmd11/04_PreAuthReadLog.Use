@@ -1,0 +1,108 @@
+// !TestName: Pre Authenticate Read.
+//
+//  Read files before authentication
+//
+
+@PrintLn("Media Select");
+var Aid    = @Itso.Aid;
+var Select = 00A40400 Aid.Length Aid;
+var Fci    = @ApduA(Select);
+@Assert(Fci[¬1..] == 9000, "Select OK?");
+
+@PrintLn("Parsing the FCI");          @Debug(Fci);    
+var Body_6F      = @Tlv(6F, Fci);        @Debug(Body_6F);
+var Body_A5      = @Tlv(A5, Body_6F);    @Debug(Body_A5);
+var Shell        = @Tlv(C0, Body_A5);    @Debug(Shell);
+var Capabilities = @Tlv(C1, Body_A5);    @Debug(Capabilities);
+var Directory    = @Tlv(C2, Body_A5);    @Debug(Directory);
+var OidList      = @Tlv(C3, Body_A5);    @Debug(OidList);
+var OldCSS       = @Tlv(C3, Body_A5);    @Debug(OldCSS);
+var Challenge    = @Tlv(C5, Body_A5);    @Debug(Challenge);
+var PseudoUid    = @Tlv(C6, Body_A5);    @Debug(PseudoUid);
+var StaticUid    = @Tlv(C7, Body_A5);    @Debug(StaticUid);
+var Kas1Kas2     = @Tlv(C8, Body_A5);    @Debug(Kas1Kas2);
+
+
+u8  ShellE = Shell[18_d];
+u8  _bE = 0;
+
+var Res;
+
+@PrintLn("Reading Logs");
+Res = @ApduA("Read  0 Log", 9016 0000 00 );
+@Test(Res[¬1..] == 6A86, "Read 0 Log was expected to fail");
+
+Res = @ApduA("Read  1 Log", 9016 0100 00 );
+@Test(Res[¬1..] == 9000, "Read 1 Log OK");
+
+Res = @ApduA("Read  2 Log", 9016 0200 00 );
+@Test(Res[¬1..] == 9000, "Read 2 Log OK");
+
+Res = @ApduA("Read  3 Log", 9016 0300 00 );
+@Test(Res[¬1..] == 9000, "Read 3 Log OK");
+
+Res = @ApduA("Read  4 Log", 9016 0400 00 );
+@Test(Res[¬1..] == 9000, "Read 4 Log OK");
+
+Res = @ApduA("Read  5 Log", 9016 0500 00 );
+@Test(Res[¬1..] == 9000, "Read 5 Log OK");
+
+Res = @ApduA("Read  6 Log", 9016 0600 00 );
+@Test(Res[¬1..] == 6A86, "Read 6 Log was expected to fail");
+
+@PrintLn("============ Reading IPEs ===================");
+@PrintLn("Only expecting #1 to be populated");
+
+_bE = 0;
+
+Res = @ApduA("Read  Ipe #" :: _bE , 9012 ((u8)_bE) 00 00 );
+@Test(Res[¬1..] == 6A86, "Expecting bad P1/P2");
+_bE++;
+
+Res = @ApduA("Read  Ipe #" :: _bE , 9012 ((u8)_bE) 00 00 );
+@Test(Res[¬1..] == 9000, "Read IPE should clip the seal");
+if (Res[¬1..] == 9000) {
+    @Test(Res[¬17_d..¬10_d] == Res[¬9..¬2], "Seal should be redacted");
+}
+//var q1=Res[¬17_d..¬10_d];
+//var q2=Res[¬9..¬2];
+//@Debug(q1);
+//@Debug(q2);
+_bE++;
+
+for ( ; _bE<ShellE; _bE++) {
+    Res = @ApduA("Read  Ipe #" :: _bE , 9012 ((u8)_bE) 00 00 );
+    @Test(Res[¬1..] == 6A83 , "Read IPE be record not found");
+}
+
+Res = @ApduA("Read  Ipe #"::_bE, 9012 ((u8)_bE) 00 00 );
+@Test(Res[¬1..] == 6A86, "Expecting bad P1/P2");
+
+
+
+@PrintLn("============ Reading VRGs ===================");
+@PrintLn("Only expecting #1 to be populated");
+
+_bE = 0;
+
+Res = @ApduA("Read  Vrg #" :: _bE , 9014 ((u8)_bE) 00 00 );
+@Test(Res[¬1..] == 6A86, "Expecting bad P1/P2");
+_bE++;
+
+Res = @ApduA("Read  Vrg #" :: _bE , 9014 ((u8)_bE) 00 00 );
+@Test(Res[¬1..] == 9000, "Read IPE should clip the seal");
+if (Res[¬1..] == 9000) {
+    @Test(Res[¬17_d..¬10_d] == Res[¬9..¬2], "Seal should be redacted");
+}
+_bE++;
+
+for ( ; _bE<ShellE; _bE++) {
+    Res = @ApduA("Read  Vrg #" :: _bE , 9014 ((u8)_bE) 00 00 );
+    @Test(Res[¬1..] == 6A83 , "Read IPE be record not found");
+}
+
+Res = @ApduA("Read  Vrg #"::_bE, 9014 ((u8)_bE) 00 00 );
+@Test(Res[¬1..] == 6A86, "Expecting bad P1/P2");
+
+
+

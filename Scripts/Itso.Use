@@ -1,0 +1,32 @@
+// !TestName: Itso
+//
+//  Test Description here
+//  more...
+//
+//  End of comments marks the end of this description.
+//
+
+
+@PrintLn("Aid                     = " :: @Itso.Aid);
+@PrintLn("PwdI2F                  = " :: @Itso.PwdI2F);
+@PrintLn("PwdLive                 = " :: @Itso.PwdLive);
+@PrintLn;
+@PrintLn("Date()                  = " :: @Itso.Date);
+@PrintLn("Date(1997_d,1,2)        = " :: @Itso.Date(1997_d,1,2));
+@PrintLn("Date(2041_d,11_d,10_d)  = " :: @Itso.Date(2041_d,11_d,10_d));
+@PrintLn;
+@PrintLn("DateX                   = " :: @Itso.DateX);
+@PrintLn("DateX(1997_d,1,1)       = " :: @Itso.DateX(1997_d,1,1));
+@PrintLn("DateX(2041_d,11_d,10_d) = " :: @Itso.DateX(2041_d,11_d,10_d));
+@PrintLn;
+@PrintLn("Dts                                = " :: @Itso.Dts);
+@PrintLn("Dts(1997_d,1,1, 0, 0)              = " :: @Itso.Dts(1997_d,1,1, 0, 0));
+@PrintLn("Dts(2028_d,11_d,24_d, 20_d, 16_d)  = " :: @Itso.Dts(2028_d,11_d,24_d, 20_d, 16_d));
+@PrintLn;
+
+@PrintLn("DtsX                               = " :: @Itso.DtsX);
+@PrintLn("DtsX(1997_d,1,1, 0, 0)             = " :: @Itso.DtsX(1997_d,1,1, 0, 0));
+@PrintLn("DtsX(2028_d,11_d,24_d, 20_d, 16_d) = " :: @Itso.DtsX(2028_d,11_d,24_d, 20_d, 16_d));
+@PrintLn;
+
+@Test(@Itso.DtsX / (24_d * 60_d) == @Itso.DateX,  "Datex Datx for the same date.");

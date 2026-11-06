@@ -100,7 +100,6 @@ public abstract class VCard {
             Log.d(TAG, "Key load went tits up");
             throw new VCard.VirtualCardException("VCard: Key load went tits up");
         }
-
     }
 
 
@@ -271,9 +270,7 @@ public abstract class VCard {
     protected abstract byte[]   Dispatch(byte[] baApdu);                                            // Process the incoming APDU
 
 
-
-
-// =================================================================================================
+    // =================================================================================================
 // =============================================================================================
 // Helper classes and static functions
 // Helper functions used by the subclasses.

@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Landscape: log text box on the left, buttons in a 2 x 3 grid to its right.
+     The button area is a fixed width so up to three more buttons can be added
+     (append their ids to buttonFlow's constraint_referenced_ids) without moving the text box. -->
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/main"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context=".MainActivity">
+
+    <TextView
+        android:id="@+id/txtquestion"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_margin="16dp"
+        android:background="@android:drawable/alert_light_frame"
+        android:scrollbars="vertical"
+        android:scrollHorizontally="false"
+        android:textSize="15sp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toStartOf="@+id/buttonFlow"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- 2 columns x 100dp + 8dp gap -->
+    <androidx.constraintlayout.helper.widget.Flow
+        android:id="@+id/buttonFlow"
+        android:layout_width="208dp"
+        android:layout_height="0dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="16dp"
+        app:constraint_referenced_ids="buttonLoad,buttonSave,buttonClose"
+        app:flow_horizontalBias="0"
+        app:flow_horizontalGap="8dp"
+        app:flow_horizontalStyle="packed"
+        app:flow_maxElementsWrap="2"
+        app:flow_verticalBias="0"
+        app:flow_verticalGap="8dp"
+        app:flow_verticalStyle="packed"
+        app:flow_wrapMode="aligned"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <Button
+        android:id="@+id/buttonLoad"
+        android:layout_width="100dp"
+        android:layout_height="50dp"
+        android:text="Load" />
+
+    <Button
+        android:id="@+id/buttonSave"
+        android:layout_width="100dp"
+        android:layout_height="50dp"
+        android:text="Save" />
+
+    <Button
+        android:id="@+id/buttonClose"
+        android:layout_width="100dp"
+        android:layout_height="50dp"
+        android:text="Close" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

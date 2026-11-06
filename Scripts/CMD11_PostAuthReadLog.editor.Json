@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "language": "Script",
+  "useTabs": false,
+  "tabWidth": 4,
+  "indentWidth": 4,
+  "showWhitespace": false,
+  "showLineEndings": false,
+  "wordWrap": false,
+  "showLineNumbers": true,
+  "showBookmarkMargin": false,
+  "showBreakpointMargin": false,
+  "zoom": 0,
+  "multiCaretEditing": true,
+  "dragDropText": true,
+  "highlightSelectionMatches": true,
+  "highlightMatchingBraces": true,
+  "showFolding": false,
+  "showChangeIndicator": true,
+  "bookmarks": [],
+  "breakpoints": []
+}

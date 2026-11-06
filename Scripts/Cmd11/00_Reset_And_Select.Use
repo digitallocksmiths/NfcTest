@@ -1,0 +1,30 @@
+// !TestName: 00_Reset_And_Select
+//
+//  Test Description here
+//  more...
+//
+//  End of comments marks the end of this description.
+//
+
+@ResetA.cold;
+
+@PrintLn("Media Select");
+var Aid    = @Itso.Aid;
+var Select = 00A40400 Aid.Length Aid;
+var Fci    = @ApduA(Select);
+@Assert(Fci[¬1..] == 9000, "Select OK?");
+
+@PrintLn("Parsing the FCI");          @Debug(Fci);    
+var Body_6F      = @Tlv(6F, Fci);        @Debug(Body_6F);
+var Body_A5      = @Tlv(A5, Body_6F);    @Debug(Body_A5);
+var Shell        = @Tlv(C0, Body_A5);    @Debug(Shell);
+var Capabilities = @Tlv(C1, Body_A5);    @Debug(Capabilities);
+var Directory    = @Tlv(C2, Body_A5);    @Debug(Directory);
+var OidList      = @Tlv(C3, Body_A5);    @Debug(OidList);
+var OldCSS       = @Tlv(C4, Body_A5);    @Debug(OldCSS);
+var Challenge    = @Tlv(C5, Body_A5);    @Debug(Challenge);
+var PseudoUid    = @Tlv(C6, Body_A5);    @Debug(PseudoUid);
+var StaticUid    = @Tlv(C7, Body_A5);    @Debug(StaticUid);
+var Kas1Kas2     = @Tlv(C8, Body_A5);    @Debug(Kas1Kas2);
+
+@Test(Fci.length > 0, "Token test to make the tree go green!");

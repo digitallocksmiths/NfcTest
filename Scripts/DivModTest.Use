@@ -1,0 +1,17 @@
+// !TestName: DivModTest
+//
+//  Test Description here
+//  more...
+//
+//  End of comments marks the end of this description.
+//  
+
+
+var foo = 0000001234560;
+var bar = 123456;
+
+@Trace("foo = " :: foo);
+@Trace("bar = " :: bar);
+
+@Trace("div = " :: foo / bar);
+@Trace("bar = " :: foo % bar);

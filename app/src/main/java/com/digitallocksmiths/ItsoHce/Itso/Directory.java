@@ -45,8 +45,8 @@ public class Directory {
     public boolean E_Empty(int i) {
         if (i < 1 || i > iE)                                                { return false; }
         int iOffset = 2 + (i - 1) * 5;
-        for (int j = 0; j < 5; j++) { if (baDirectory[iOffset + j] != 0x00) { return true;  } }     // An entry is considered valid if it is NOT all zeros
-        return false;
+        for (int j = 0; j < 5; j++) { if (baDirectory[iOffset + j] != 0x00) { return false;  } }     // An entry is considered valid if it is NOT all zeros
+        return true;
     }
 
 }

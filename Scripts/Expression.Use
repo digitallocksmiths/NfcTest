@@ -1,0 +1,47 @@
+// !TestName: Expression
+//
+//  Test Description here
+//  more...
+//
+//  End of comments marks the end of this description.
+//
+
+
+var V0 =  1 2 3 1010_b;
+
+var V1 =  10+11 12;
+
+@Debug;
+
+var V2 = 2 (21+22) 23;
+@Debug;
+
+
+var V3 = 30 31+32 33;
+@Debug;
+
+var V4 = 40 (V2 + V3) 41;
+var V5 = 50 V2 + V3 51;
+var V6 = V1 V2 V3;
+
+V7 = 101010_b;
+
+var Bar;
+
+Bar= 123;
+
+@Trace(V6 Bar);
+
+var foo;
+var _foo;
+var __foo;
+var __foo_bar;
+// var _;
+//var _0foo;
+var __0Foo;
+
+
+
+
+
+@Debug;
