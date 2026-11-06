@@ -91,6 +91,14 @@ public class Cmd12 extends VCard {
     }
 
     // ========================================
+    // DeleteCheck()
+    //      may this card's image be deleted?
+    // ========================================
+    public DeletePolicy DeleteCheck() {
+        return DeletePolicy.ASK;                                                                    // ToDo: decide once Cmd12 holds real data.
+    }
+
+    // ========================================
     // Select()
     //      Construct and return the FCI
     // ========================================

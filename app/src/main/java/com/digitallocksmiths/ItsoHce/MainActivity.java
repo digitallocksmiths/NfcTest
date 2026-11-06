@@ -53,6 +53,7 @@ public class MainActivity extends AppCompatActivity {
         findViewById(R.id.buttonLoad).setOnClickListener(this::LoadButton);
         findViewById(R.id.buttonSave).setOnClickListener(this::SaveButton);
         findViewById(R.id.buttonCards).setOnClickListener(this::CardsButton);
+        findViewById(R.id.buttonDelete).setOnClickListener(this::DeleteButton);
         findViewById(R.id.buttonClose).setOnClickListener(this::CloseButton);
 
         TextView tv = findViewById(R.id.txtquestion);
@@ -285,6 +286,66 @@ public class MainActivity extends AppCompatActivity {
             Print("VirtualCardException: " + e.getMessage() + "\n");
         }
         ShowTitle();
+    }
+
+    // =================================
+    // Delete Button
+    //      delete the default card. The card
+    //      decides if that is OK, needs the
+    //      user's confirmation, or is forbidden.
+    // =================================
+
+    public void DeleteButton(View v) {
+        Log.d(TAG, "BUTTONS: User tapped the DeleteButton");
+        if (vcard != null) {                                                                        // the service may have updated the image since we
+            vcard.Dispose();                                                                        //      loaded it, so judge a fresh copy from NVM
+            vcard = null;
+        }
+        try {
+            vcard = VCard.FactoryImageLoad(VCard.ActiveCardGet());
+        }
+        catch (VCard.VirtualCardException e) {
+            Print("VirtualCardException: " + e.getMessage() + "\n");
+            ShowTitle();
+            return;
+        }
+
+        vcard.Delete(new VCard.DeleteUi() {
+            @Override
+            public void Ask(String szPrompt, Runnable onConfirm) {
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle(R.string.delete_title)
+                        .setMessage(szPrompt)
+                        .setPositiveButton(R.string.delete_confirm, (dialog, which) -> onConfirm.run())
+                        .setNegativeButton(android.R.string.cancel, (dialog, which) -> Print("Delete cancelled\n"))
+                        .show();
+            }
+
+            @Override
+            public void Forbid(String szReason) {
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle(R.string.delete_forbidden_title)
+                        .setMessage(szReason)
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show();
+            }
+
+            @Override
+            public void Deleted(String szCardId) {
+                Print("Deleted card " + szCardId + "\n");
+                if (vcard != null) {                                                                // scrub the deleted card's secrets
+                    vcard.Dispose();
+                    vcard = null;
+                }
+                try {
+                    vcard = VCard.FactoryImageLoad(VCard.ActiveCardGet());                          // the new default card, or CMD0 if none are left
+                }
+                catch (VCard.VirtualCardException e) {
+                    Print("VirtualCardException: " + e.getMessage() + "\n");
+                }
+                ShowTitle();
+            }
+        });
     }
 
     public void SaveButton(View v) {

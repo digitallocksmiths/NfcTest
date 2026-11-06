@@ -86,6 +86,14 @@ public class Cmd2 extends VCard {
         // ToDo: Overwrite keys and other secrets here.
     }
 
+    // ========================================
+    // DeleteCheck()
+    //      may this card's image be deleted?
+    // ========================================
+    public DeletePolicy DeleteCheck() {
+        return DeletePolicy.ASK;                                                                    // ToDo: decide once Cmd2 holds real data.
+    }
+
 
     // ========================================
     // Select()

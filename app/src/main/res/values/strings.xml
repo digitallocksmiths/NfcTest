@@ -5,4 +5,7 @@
     <string name="title_card">%1$s: %2$s</string>
     <string name="title_no_card">No card image</string>
     <string name="cards_picker_title">Select default card</string>
+    <string name="delete_title">Delete card</string>
+    <string name="delete_confirm">Delete</string>
+    <string name="delete_forbidden_title">Cannot delete card</string>
 </resources>

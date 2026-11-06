@@ -97,6 +97,14 @@ public class Cmd0 extends VCard {
     }
 
     // ========================================
+    // DeleteCheck()
+    //      may this card's image be deleted?
+    // ========================================
+    public DeletePolicy DeleteCheck() {
+        return DeletePolicy.OK;                                                                     // an unrecognised image: nothing worth keeping
+    }
+
+    // ========================================
     // Select()
     //      Construct and return the FCI
     // ========================================

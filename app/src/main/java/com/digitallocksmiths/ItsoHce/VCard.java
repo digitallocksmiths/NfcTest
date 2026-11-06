@@ -388,6 +388,62 @@ public abstract class VCard {
         Log.d(TAG, "MigrateLegacyImage: moved to card " + szCardId);
     }
 
+    // =============================================================================================
+    // Card deletion
+    //      The subclass decides whether its image may be deleted (DeleteCheck);
+    //      VCard applies that decision. The caller supplies the user interaction.
+    //
+    public enum DeletePolicy {
+        OK,                                                                                         // delete without asking
+        ASK,                                                                                        // warn the user, who may cancel
+        FORBID                                                                                      // tell the user it cannot be deleted
+    }
+
+    public interface DeleteUi {
+        void Ask(String szPrompt, Runnable onConfirm);                                              // run onConfirm only if the user agrees
+        void Forbid(String szReason);                                                               // tell the user why the card stays
+        void Deleted(String szCardId);                                                              // the card's image has gone
+    }
+
+    public void Delete(DeleteUi ui) {
+        if (nvm == null) {                                                                          // e.g. the CMD0 stand-in: nothing stored
+            ui.Forbid("There is no stored card to delete.");
+            return;
+        }
+        String szCard = NameGet() + ": " + TitleGet() + " (" + CardIdGet() + ")";
+        switch (DeleteCheck()) {
+            case OK:
+                ImageDelete(ui);
+                break;
+            case ASK:
+                ui.Ask("Delete card " + szCard + "?\nThe card image cannot be recovered.", () -> ImageDelete(ui));
+                break;
+            case FORBID:
+            default:
+                ui.Forbid("Card " + szCard + " cannot be deleted.");
+                break;
+        }
+    }
+
+    private void ImageDelete(DeleteUi ui) {                                                         // remove the image files and the card's directory
+        String szCardId = new File(nvm.szImageDir).getName();                                       // the directory, not the UID, names the stored card
+        nvm.WipeDirectory();
+        if (!new File(nvm.szImageDir).delete()) { Log.d(TAG, "ImageDelete: directory not removed"); }
+        nvm = null;
+
+        if (szCardId.equals(ActiveCardGet())) {                                                     // the default card has gone: promote another, if any
+            ArrayList<CardInfo> cards = CardList();
+            if (cards.isEmpty()) {
+                if (!new File(szImageRoot + szActiveCard).delete()) { Log.d(TAG, "ImageDelete: ActiveCard not removed"); }
+            } else {
+                try                             { ActiveCardSet(cards.get(0).szId); }
+                catch (VirtualCardException e)  { Log.d(TAG, "ImageDelete: " + e.getMessage()); }
+            }
+        }
+        Log.d(TAG, "ImageDelete: deleted card " + szCardId);
+        ui.Deleted(szCardId);
+    }
+
     protected abstract int      ImageGetSize();                                                     // subclasses indicate their own storage volume requirements
     protected abstract void     ImageDeserialize(ByteBuffer buffer)  throws VirtualCardException;   // subclasses populate their working variables here.
     protected abstract void     ImageSerialize(ByteBuffer buffer);                                  // subclasses serialize their variables here.
@@ -395,6 +451,7 @@ public abstract class VCard {
     protected abstract void     JsonExport(JSONObject jsonCardImage) throws JSONException;          // Make a Json String of the CM Image
     protected abstract void     Reset()                              throws VirtualCardException;   // Called on Reset.
     protected abstract void     Dispose();                                                          // Overwrite secrets before the instance is abandoned to the GC.
+    protected abstract DeletePolicy DeleteCheck();                                                  // May this card's image be deleted?
     protected abstract byte[]   Select(byte[] baAid);                                               // build the FCI's A5 TLV.
     protected abstract byte[]   Dispatch(byte[] baApdu);                                            // Process the incoming APDU
 

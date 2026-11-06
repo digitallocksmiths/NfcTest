@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Landscape: log text box on the left, buttons in a 2 x 3 grid to its right.
-     The button area is a fixed width so up to three more buttons can be added
+     The button area is a fixed width so one more button can be added
      (append their ids to buttonFlow's constraint_referenced_ids) without moving the text box. -->
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -50,7 +50,7 @@
         android:layout_marginTop="16dp"
         android:layout_marginEnd="16dp"
         android:layout_marginBottom="16dp"
-        app:constraint_referenced_ids="buttonLoad,buttonSave,buttonCards,buttonClose"
+        app:constraint_referenced_ids="buttonLoad,buttonSave,buttonCards,buttonDelete,buttonClose"
         app:flow_horizontalBias="0"
         app:flow_horizontalGap="8dp"
         app:flow_horizontalStyle="packed"
@@ -80,6 +80,12 @@
         android:layout_width="100dp"
         android:layout_height="50dp"
         android:text="Cards" />
+
+    <Button
+        android:id="@+id/buttonDelete"
+        android:layout_width="100dp"
+        android:layout_height="50dp"
+        android:text="Delete" />
 
     <Button
         android:id="@+id/buttonClose"

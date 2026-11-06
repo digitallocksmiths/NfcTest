@@ -394,6 +394,22 @@ public class Cmd11 extends VCard {
         fPseudoAuthenticated = false;                                                               //
     }
 
+    // =============================================================================================    DeleteCheck (abstract implementation)
+    // ========================================
+    // DeleteCheck()
+    //      may this card's image be deleted?
+    //      An empty directory: yes.
+    //      Any occupied IPE: ask the user.
+    // ========================================
+    public DeletePolicy DeleteCheck() {
+        for (int i = 1; i < shell.getE(); i++) {                                                    // the IPE entries, as JsonExport walks them
+            if (!directory.E_Empty(i)) {                                                            //      one is occupied
+                return DeletePolicy.ASK;                                                            //      so let the user confirm
+            }
+        }
+        return DeletePolicy.OK;                                                                     // nothing stored on the card
+    }
+
     // =============================================================================================    Select (abstract implementation)
     // ========================================
     // Select()
