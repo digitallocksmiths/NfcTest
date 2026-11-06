@@ -516,10 +516,9 @@ public abstract class VCard {
         SecretKey   key;
 
         // ToDo: New Key
-        key = null;
         switch (AorB) {
-            case Shadow.A: szFilename = szFileNameA;                                              // Read the encrypted file
-                KeyA       = key;
+            case Shadow.A: szFilename = szFileNameA;                                              // Write the encrypted file
+                key        = KeyA;
                 break;
             case Shadow.B: szFilename = szFileNameB;
                 key      = KeyB;
