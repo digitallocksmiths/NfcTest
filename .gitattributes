@@ -1,0 +1,9 @@
+# Store text files with LF in the repo; Git converts to the platform's
+# line endings (CRLF on Windows) in the working tree.
+* text=auto
+
+# Scripts that must keep a specific line ending wherever they are checked out.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+gradlew text eol=lf
+*.sh    text eol=lf
