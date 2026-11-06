@@ -69,7 +69,7 @@ public class Cmd0 extends VCard {
 
     // ========================================
     // JsonExport()
-    //      Save the CM image to the NVM store.
+    //      Add the CM image to the JSON export.
     // ========================================
     protected void  JsonExport(JSONObject jsonCardImage) {                                          // Add data to the JSON object.
         Log.d(TAG, "JsonExport");

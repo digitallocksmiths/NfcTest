@@ -50,8 +50,8 @@ public class MainActivity extends AppCompatActivity {
             return insets;
         });
 
-        findViewById(R.id.buttonLoad).setOnClickListener(this::LoadButton);
-        findViewById(R.id.buttonSave).setOnClickListener(this::SaveButton);
+        findViewById(R.id.buttonImport).setOnClickListener(this::ImportButton);
+        findViewById(R.id.buttonExport).setOnClickListener(this::ExportButton);
         findViewById(R.id.buttonCards).setOnClickListener(this::CardsButton);
         findViewById(R.id.buttonDelete).setOnClickListener(this::DeleteButton);
         findViewById(R.id.buttonClose).setOnClickListener(this::CloseButton);
@@ -171,7 +171,7 @@ public class MainActivity extends AppCompatActivity {
         try {
             vcard = VCard.ImageImportJson(szJsonFilename);
             VCard.ActiveCardSet(vcard.CardIdGet());                                                 // an imported card becomes the default
-            Print("Image load: " + vcard.szFilename + " (card " + vcard.CardIdGet() + ")\n");
+            Print("Image import: " + vcard.szFilename + " (card " + vcard.CardIdGet() + ")\n");
             ShowTitle();
             return;
         }
@@ -181,7 +181,7 @@ public class MainActivity extends AppCompatActivity {
         catch (Exception e) {
             Print("Exception: " + e.getMessage() + "\n");
         }
-        Print("Image load failed. Substituting CMD0\n");
+        Print("Image import failed. Substituting CMD0\n");
         try {
             vcard = new Cmd0();
         }
@@ -207,12 +207,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // =================================
-    // Load Button
+    // Import Button
     //      triggers ImportImage(jsonFilename)
     // =================================
 
-    public void LoadButton(View v) {
-        //Print("Load\n");
+    public void ImportButton(View v) {
+        //Print("Import\n");
 
         DialogProperties properties = new DialogProperties();
         properties.selection_type = DialogConfigs.FILE_SELECT;
@@ -249,7 +249,7 @@ public class MainActivity extends AppCompatActivity {
         Log.d(TAG, "BUTTONS: User tapped the CardsButton");
         ArrayList<VCard.CardInfo> cards = VCard.CardList();
         if (cards.isEmpty()) {
-            Print("No cards stored. Use Load to import one.\n");
+            Print("No cards stored. Use Import to add one.\n");
             return;
         }
 
@@ -348,8 +348,8 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    public void SaveButton(View v) {
-        Print("Save\n");
+    public void ExportButton(View v) {
+        Print("Export\n");
         String szFilename = GetAppPublicDirectory() +  File.separator + szCardSnapshot;
         ExportImage(szFilename);
     }

@@ -50,7 +50,7 @@
         android:layout_marginTop="16dp"
         android:layout_marginEnd="16dp"
         android:layout_marginBottom="16dp"
-        app:constraint_referenced_ids="buttonLoad,buttonSave,buttonCards,buttonDelete,buttonClose"
+        app:constraint_referenced_ids="buttonImport,buttonExport,buttonCards,buttonDelete,buttonClose"
         app:flow_horizontalBias="0"
         app:flow_horizontalGap="8dp"
         app:flow_horizontalStyle="packed"
@@ -64,16 +64,16 @@
         app:layout_constraintTop_toTopOf="parent" />
 
     <Button
-        android:id="@+id/buttonLoad"
+        android:id="@+id/buttonImport"
         android:layout_width="100dp"
         android:layout_height="50dp"
-        android:text="Load" />
+        android:text="Import" />
 
     <Button
-        android:id="@+id/buttonSave"
+        android:id="@+id/buttonExport"
         android:layout_width="100dp"
         android:layout_height="50dp"
-        android:text="Save" />
+        android:text="Export" />
 
     <Button
         android:id="@+id/buttonCards"
