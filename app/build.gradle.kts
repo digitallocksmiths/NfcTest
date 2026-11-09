@@ -24,6 +24,8 @@ android {
             isMinifyEnabled = false
         }
         release {
+            // Signed with the debug key for sharing with test engineers; not for store distribution.
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
             optimization {
                 enable = false
