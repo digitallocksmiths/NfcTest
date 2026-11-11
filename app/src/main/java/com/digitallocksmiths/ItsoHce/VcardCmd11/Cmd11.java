@@ -767,12 +767,13 @@ public class Cmd11 extends VCard {
         if (fAuthenticated) { System.arraycopy(aIpe[iIpeNo - 1].baBody, 0, baDeliverable, 5, iIpeSize+16);  } // Auth : Body + seal
         else                { System.arraycopy(aIpe[iIpeNo - 1].baBody, 0, baDeliverable, 5, iIpeSize);       //      : Body +
                               Arrays.fill(baDeliverable, 5+iIpeSize, 5+iIpeSize+16, (byte)0xff); }            //      :        redacted
-        ResponseHashedIfNecessary(baDeliverable, SW.NO_ERROR);
+        ResponseHashedIfNecessary(baApdu, baDeliverable, SW.NO_ERROR);
     }
 
-    private void  ResponseHashedIfNecessary(byte[] baBuff, short sStatusWord) throws ApduExitException {
+    private void  ResponseHashedIfNecessary(byte[] baApdu, byte[] baBuff, short sStatusWord) throws ApduExitException {
         if (fAuthenticated) {
-            Hash.update(baBuff);
+            Hash.update(baApdu);                                                                    // Command APDU
+            Hash.update(baBuff);                                                                    // Response data
             Hash.update((byte) (sStatusWord >> 8));
             Hash.update((byte) (sStatusWord & (byte) 0xFF));
         }
@@ -817,7 +818,7 @@ public class Cmd11 extends VCard {
         if (fAuthenticated) { System.arraycopy(aVrg[iIpeNo - 1].baBody, 0, baDeliverable, 5, iVrgSize+16);  } // Auth : Body + seal
         else                { System.arraycopy(aVrg[iIpeNo - 1].baBody, 0, baDeliverable, 5, iVrgSize);       //      : Body +
                               Arrays.fill(baDeliverable, 5+iVrgSize, 5+iVrgSize+16, (byte)0xff); }            //      :        redacted
-        ResponseHashedIfNecessary(baDeliverable, SW.NO_ERROR);
+        ResponseHashedIfNecessary(baApdu, baDeliverable, SW.NO_ERROR);
     }
 
     // ##########################################################################
@@ -847,7 +848,7 @@ public class Cmd11 extends VCard {
         byte[] baDeliverable = new byte[sLen];                                                      // Space needed
 
         System.arraycopy(TTLog.baBody, 0, baDeliverable, 0, sLen);                                  // Records copied
-        ResponseHashedIfNecessary(baDeliverable, SW.NO_ERROR);
+        ResponseHashedIfNecessary(baApdu, baDeliverable, SW.NO_ERROR);
     }
 
     // ##########################################################################
