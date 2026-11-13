@@ -31,58 +31,58 @@ u8  IpeKas = 01;
 var _ShellE = Shell[18_d];
 
 @PrintLn(" ************ Verify Directory *******************");
-Rx = @ApduB("WSAM Dir", 9040 0002 ((u8)(2 + Directory.Length)) ((u16)Directory.Length)  Directory);
-Rx = @ApduB("VERIFY_ITSO", 904E 0000 00 );
+Rx = @ReaderB.Apdu("WSAM Dir", 9040 0002 ((u8)(2 + Directory.Length)) ((u16)Directory.Length)  Directory);
+Rx = @ReaderB.Apdu("VERIFY_ITSO", 904E 0000 00 );
 @Assert(Rx[¬1..] == 9000, "Verify Directory");
 
 
 var Msg;
 @PrintLn(" ************ Create VRG *************************");
 Msg = IpeEntry Vrg;
-Rx = @ApduB("WSAM VRG", 9040 0002 ((u8)(2 + Msg.length)) ((u16)(Msg.length)) Msg);
+Rx = @ReaderB.Apdu("WSAM VRG", 9040 0002 ((u8)(2 + Msg.length)) ((u16)(Msg.length)) Msg);
 @Assert(Rx[¬1..] == 9000, "WSAM");
 
-Rx = @ApduB("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 IpeKas 00);
+Rx = @ReaderB.Apdu("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 IpeKas 00);
 @Assert(Rx[¬1..] == 9000, "CREATE_IPE");
 SectorPwdVrg = Rx[2..9];
  
-Rx = @ApduB("RSAM len", 90420002 02);
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
 @Assert(Rx[¬1..] == 9000, "WSAM");
 
-Rx = @ApduB("RSAM body", 90420004 Rx[1]);
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
 @Assert(Rx[¬1..] == 9000, "WSAM");
 var SignedVrg = Rx[5..¬2];
 
 @PrintLn(" ************ Create IPE *************************");
 Msg = IpeEntry Ipe;
-Rx = @ApduB("WSAM IPE", 9040 0002 ((u8)(2 + Msg.length)) ((u16)(Msg.length)) Msg);
+Rx = @ReaderB.Apdu("WSAM IPE", 9040 0002 ((u8)(2 + Msg.length)) ((u16)(Msg.length)) Msg);
 @Assert(Rx[¬1..] == 9000, "WSAM");
 
-Rx = @ApduB("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 IpeKas 00);
+Rx = @ReaderB.Apdu("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 IpeKas 00);
 @Assert(Rx[¬1..] == 9000, "Create IPE");
 SectorPwdIpe = Rx[2..9];
 
-Rx = @ApduB("RSAM len", 90420002 02);
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
 @Assert(Rx[¬1..] == 9000, "WSAM");
 
-Rx = @ApduB("RSAM body", 90420004 Rx[1]);
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
 @Assert(Rx[¬1..] == 9000, "WSAM");
 var SignedIpe = Rx[5..¬2];
 
 
 @PrintLn(" ************ Create LOG *************************");
 Msg = LogE_Orphan Log;
-Rx = @ApduB("WSAM LOG", 9040 0002 ((u8)(2 + Msg.length)) ((u16)(Msg)) Msg);
+Rx = @ReaderB.Apdu("WSAM LOG", 9040 0002 ((u8)(2 + Msg.length)) ((u16)(Msg)) Msg);
 @Assert(Rx[¬1..] == 9000, "WSAM");
 
-Rx = @ApduB("CREATE_IPE", 9052 (_ShellE-1) 00 01 IpeKas 00);
+Rx = @ReaderB.Apdu("CREATE_IPE", 9052 (_ShellE-1) 00 01 IpeKas 00);
 @Assert(Rx[¬1..] == 9000, "Create IPE");
 SectorPwdLog = Rx[2..9];
 
-Rx = @ApduB("RSAM len", 90420002 02);
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
 @Assert(Rx[¬1..] == 9000, "WSAM");
 
-Rx = @ApduB("RSAM body", 90420004 Rx[1]);
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
 @Assert(Rx[¬1..] == 9000, "WSAM");
 var SignedLog = Rx[5..¬2];
 
@@ -108,16 +108,16 @@ var newDir = _D1 _D2 _D3 _D4 _D5;
 @Debug(newDir);
 
 
-Rx = @ApduB("WSAM Directory", 9040 0002 ((u8)(2 + newDir.length)) ((u16)newDir.length)  newDir);
+Rx = @ReaderB.Apdu("WSAM Directory", 9040 0002 ((u8)(2 + newDir.length)) ((u16)newDir.length)  newDir);
 @Assert(Rx[¬1..] == 9000, "WSAM");
-Rx = @ApduB("WDIR", 9056 0000 01 01 00);
+Rx = @ReaderB.Apdu("WDIR", 9056 0000 01 01 00);
 @Assert(Rx[¬1..] == 9000, "WDIR");
 SectorPwdDir = Rx[2..9];
 
-Rx = @ApduB("RSAM len", 90420002 02);
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
 @Assert(Rx[¬1..] == 9000, "WSAM");
 
-Rx = @ApduB("RSAM body", 90420004 Rx[1]);
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
 @Assert(Rx[¬1..] == 9000, "WSAM");
 var SignedDir = Rx[..¬2];
 
@@ -142,14 +142,14 @@ var HashAcc = @Sha256.init;
 
 @PrintLn(" ************ CMD11 Update Ipe *******************");
 Tx      = 9018 IpeNo 00 ((u8)(SectorPwdIpe.length + SignedIpe.length)) SectorPwdIpe SignedIpe;
-Rx      = @ApduA("Update Ipe", Tx);
+Rx      = @ReaderA.Apdu("Update Ipe", Tx);
 HashAcc = @Sha256.Update(HashAcc, Tx);
 HashAcc = @Sha256.Update(HashAcc, Rx);
 @Assert(Rx[¬1..] == 9000, "UpdateIpe");
 
 @PrintLn(" ************ CMD11 Update Ipe *******************");
 Tx      = 901A IpeNo 00 ((u8)(SectorPwdVrg.length + SignedVrg.length)) SectorPwdVrg SignedVrg;
-Rx      = @ApduA("Update Vrg", Tx);
+Rx      = @ReaderA.Apdu("Update Vrg", Tx);
 HashAcc = @Sha256.Update(HashAcc, Tx);
 HashAcc = @Sha256.Update(HashAcc, Rx);
 @Assert(Rx[¬1..] == 9000, "UpdateVrg");
@@ -157,14 +157,14 @@ HashAcc = @Sha256.Update(HashAcc, Rx);
 
 @PrintLn(" ************ CMD11 Update Log *******************");
 Tx      = 901C 0000 ((u8)(SectorPwdLog.length + SignedLog.length)) SectorPwdLog SignedLog;
-Rx      = @ApduA("Update Log", Tx);
+Rx      = @ReaderA.Apdu("Update Log", Tx);
 HashAcc = @Sha256.Update(HashAcc, Tx);
 HashAcc = @Sha256.Update(HashAcc, Rx);
 @Assert(Rx[¬1..] == 9000, "UpdateLog");
 
 @PrintLn(" ************ CMD11 Update Dir *******************");
 Tx      = 901E 0000 ((u8)(SectorPwdDir.length + SignedDir.length)) SectorPwdDir SignedDir;
-Rx      = @ApduA("Update Dir", Tx);
+Rx      = @ReaderA.Apdu("Update Dir", Tx);
 HashAcc = @Sha256.Update(HashAcc, Tx);
 HashAcc = @Sha256.Update(HashAcc, Rx);
 @Assert(Rx[¬1..] == 9000, "UpdateDir");
@@ -172,21 +172,21 @@ HashAcc = @Sha256.Update(HashAcc, Rx);
 @PrintLn(" ************ Commit Calculation (no delivery) *********************");
 var Hash = @Sha256.Final(HashAcc);
 
-Rx      = @ApduB("WSAM", 9040 0002 ((u8)(2 + Hash.Length)) ((u16)Hash.Length) Hash);
+Rx      = @ReaderB.Apdu("WSAM", 9040 0002 ((u8)(2 + Hash.Length)) ((u16)Hash.Length) Hash);
 @Assert(Rx[¬1..] == 9000, "WSAM");
 
-Rx      = @ApduB("PIMO", 904A000004 00040020 00);
+Rx      = @ReaderB.Apdu("PIMO", 904A000004 00040020 00);
 @Assert(Rx[¬1..] == 9000, "PIMO");
 var Sig = Rx[..¬2];
 
 @PrintLn(" ************ No Commit  *********************");
 
-    @ResetA.warm;
+    @ReaderA.Reset.warm;
 
 @PrintLn("Media Select");
 Aid    = @Itso.Aid;
 Select = 00A40400 Aid.Length Aid;
-Fci    = @ApduA(Select);
+Fci    = @ReaderA.Apdu(Select);
 @Assert(Fci[¬1..] == 9000, "Select OK?");
 
 @PrintLn("Parsing the FCI");          @Debug(Fci);    
@@ -205,27 +205,27 @@ var _Kas1Kas2     = @Tlv(C8, _Body_A5);    @Debug(_Kas1Kas2);
 if (PseudoUid.Length != 0) {                                            // Did we get a PseudoUID?
 
     @PrintLn("Isam End (pseudo session)");
-    var _End_Resp = @ApduB(90 58 00 00 00);
+    var _End_Resp = @ReaderB.Apdu(90 58 00 00 00);
     @Assert(_End_Resp[¬1..] == 9000, "End OK?");
 
     @PrintLn("Isam Begin (Pseudo UID");
     var _Begin_Body = @Itso.DateX _Shell _PseudoUid _Challenge;
-    var _Begin      = 90 48 00 Kas1Kas2[0] _Begin_Body.Length _Begin_Body  00;
-    var _Isam_Chal  = @ApduB(_Begin);
+    var _Begin      = 90 48 00 _Kas1Kas2[0] _Begin_Body.Length _Begin_Body  00;
+    var _Isam_Chal  = @ReaderB.Apdu(_Begin);
     @Assert(_Isam_Chal[¬1..] == 9000, "Begin OK?");
 
     @PrintLn("Media Authenticate (pseudo)");
     var _Auth       = 90 10 00 00 (_Isam_Chal.Length-2)  _Isam_Chal[..¬2]  00;
-    var _Media_Resp = @ApduA(_Auth);
+    var _Media_Resp = @ReaderA.Apdu(_Auth);
     @Assert(_Media_Resp[¬1..] == 9000, "Authenticate OK?");
 
     @PrintLn("Isam External Authenticate (pseudo)");
     var _ExtAuth      = 00 82 00 _Kas1Kas2[1] (Media_Resp.Length - 2) _Media_Resp[..¬2];
-    var _ExtAuth_Resp = @ApduB(_ExtAuth);
+    var _ExtAuth_Resp = @ReaderB.Apdu(_ExtAuth);
     @Assert(_ExtAuth_Resp[¬1..] == 9000, "External Authenticate OK?");
 
     @PrintLn("Media Reselect");
-    var _Reselect_Resp = @ApduA(90 22 00 00 00);
+    var _Reselect_Resp = @ReaderA.Apdu(90 22 00 00 00);
     @Assert(_Reselect_Resp[¬1..] == 9000, "Reselect OK?");
 
     @PrintLn("Parsing the reselect FCI");   @Debug(_Reselect_Resp ); 
@@ -239,7 +239,7 @@ if (PseudoUid.Length != 0) {                                            // Did w
     _Kas1Kas2     = @Tlv(C8, _Body_A5);       @Debug(_Kas1Kas2);
 
     @PrintLn("Isam End (pseudo session)");
-    var End_Resp = @ApduB(90 58 00 00 00);
+    var End_Resp = @ReaderB.Apdu(90 58 00 00 00);
     @Assert(End_Resp[¬1..] == 9000, "End OK?");
 }
 

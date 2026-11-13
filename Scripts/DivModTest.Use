@@ -10,8 +10,8 @@
 var foo = 0000001234560;
 var bar = 123456;
 
-@Trace("foo = " :: foo);
-@Trace("bar = " :: bar);
+@Print("foo = " :: foo);
+@Print("bar = " :: bar);
 
-@Trace("div = " :: foo / bar);
-@Trace("bar = " :: foo % bar);
+@Print("div = " :: foo / bar);
+@Print("bar = " :: foo % bar);

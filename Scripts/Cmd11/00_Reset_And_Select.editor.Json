@@ -4,12 +4,12 @@
   "useTabs": false,
   "tabWidth": 4,
   "indentWidth": 4,
-  "showWhitespace": false,
-  "showLineEndings": false,
+  "showWhitespace": true,
+  "showLineEndings": true,
   "wordWrap": false,
   "showLineNumbers": true,
   "showBookmarkMargin": false,
-  "showBreakpointMargin": false,
+  "showBreakpointMargin": true,
   "zoom": 0,
   "multiCaretEditing": true,
   "dragDropText": true,
@@ -18,5 +18,13 @@
   "showFolding": false,
   "showChangeIndicator": true,
   "bookmarks": [],
-  "breakpoints": []
+  "breakpoints": [],
+  "disabledBreakpoints": [],
+  "toolbar": {
+    "execution": true,
+    "searchReplace": true,
+    "quickFind": true,
+    "bookmarks": false,
+    "breakpoints": true
+  }
 }

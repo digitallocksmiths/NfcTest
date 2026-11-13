@@ -6,16 +6,16 @@
 //  End of comments marks the end of this description.
 //    
 
-    @ResetA.cold;
+    @ReaderA.reset.cold;
 
 var Aid=A0000002164954534F2D31;
 
 var Apdu = 00A40400 Aid.Length Aid;
 
-var resp = @Apdu(Apdu);
+var resp = @Reader.Apdu(Apdu);
 
 
-@Apdu(0011223344);
+@Reader.apdu(0011223344);
 
 
 

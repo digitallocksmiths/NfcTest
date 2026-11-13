@@ -6,15 +6,15 @@
 //  End of comments marks the end of this description.
 //
 
-@ResetA.cold;
+@ReaderA.reset.cold;
 
 @PrintLn("Media Select");
 var Aid    = @Itso.Aid;
 var Select = 00A40400 Aid.Length Aid;
-var Fci    = @ApduA(Select);
+var Fci    = @ReaderA.Apdu(Select);
 @Assert(Fci[¬1..] == 9000, "Select OK?");
 
-@PrintLn("Parsing the FCI");          @Debug(Fci);    
+@PrintLn("Parsing the FCI");          @Debug(Fci);
 var Body_6F      = @Tlv(6F, Fci);        @Debug(Body_6F);
 var Body_A5      = @Tlv(A5, Body_6F);    @Debug(Body_A5);
 var Shell        = @Tlv(C0, Body_A5);    @Debug(Shell);

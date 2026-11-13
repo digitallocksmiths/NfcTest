@@ -9,7 +9,7 @@
   "wordWrap": false,
   "showLineNumbers": true,
   "showBookmarkMargin": false,
-  "showBreakpointMargin": false,
+  "showBreakpointMargin": true,
   "zoom": 0,
   "multiCaretEditing": true,
   "dragDropText": true,
@@ -18,5 +18,15 @@
   "showFolding": false,
   "showChangeIndicator": true,
   "bookmarks": [],
-  "breakpoints": []
+  "breakpoints": [],
+  "disabledBreakpoints": [
+    32,
+    96
+  ],
+  "toolbar": {
+    "execution": true,
+    "searchReplace": true,
+    "bookmarks": true,
+    "breakpoints": true
+  }
 }

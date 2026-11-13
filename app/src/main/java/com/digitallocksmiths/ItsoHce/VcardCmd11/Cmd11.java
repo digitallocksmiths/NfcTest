@@ -36,31 +36,29 @@ import javax.crypto.spec.SecretKeySpec;
 public class Cmd11 extends VCard {
     private static final String TAG = "Cmd11";
 
-    private static final byte  bCHAL_SIZE       =   8;                                              // Size of Random Challenge Data
-
-    private static final short sPAGE_SIZE         = 256;                                            // size of sector (IPE or VRG records)
-    private static class Sector   { byte[] baBody = new byte[sPAGE_SIZE]; }
-
-    private static final byte  bPWD_SIZE        =   8;                                              // Size of Password Data
-    private static class Password { byte[] baBody = new byte[bPWD_SIZE];  }
-
+    // CONSTANTS
+    private static final int    iCHALLENGE_SIZE =   8;                                              // The size of the Mutual Authenticate random challenge
+    private static final int    iSECTOR_SIZE    = 256;                                              // The size of a storage block used for IPEs, VRGs, LOGs and Directory
+    private static final int    iPASSWORD_SIZE  =   8;                                              // Size of Password Data
     // ToDo: ITSO ref is 228. Who's right?
-    public static final short sMAXIPE_SIZE 		= (255 - 8 - 16);                                   // pwd[8] :: Ipe[x] :: Seal[16]  =< 255 bytes.
-    public static final byte  bCSS_SIZE     	=  8;                                               // Size of Commital Confirmation Signature.
+    public  static final int    iIPE_MAXSIZE    = (255 - 8 - 16);                                   // pwd[8] :: Ipe[x] :: Seal[16]  =< 255 bytes.
+    public  static final int    iCSS_SIZE       =  8;                                               // Commit Confirmation Signature Size.
+
+
+    private static class Sector   { byte[] baBody   = new byte[iSECTOR_SIZE]; }                     // Sector is a storage unit. Java is messy with arrays of arrays (hence this)
+    private static class Password { byte[] baBody   = new byte[iPASSWORD_SIZE];  }                  // Passwords. same again and just as many.
 
     // ==========================================================================
     // Clear on reset 'RAM' variables
 
-    public byte[]  baChallenge          = new byte[bCHAL_SIZE];
-    public byte[]  baChallengeTemp      = new byte[bCHAL_SIZE];
+    public byte[]  baChallenge          = new byte[iCHALLENGE_SIZE];                                // Mutual Authenticat Challenge (random data)
+    public byte[]  baChallengeTemp      = new byte[iCHALLENGE_SIZE];                                // Holds the mangled Challenge delivered to the IFD.
 
     // ToDo: Make these booleans a secure boolean variant.
     public boolean fAuthenticated       = false;                                                    // Bool vars
     public boolean fPseudoAuthenticated = false;
     public boolean fUsingPseudoShellUID = false;
-    //public short   sFciStart            = 0;                                                        // Short vars
-    //public short   sFciA5LenOffset      = 0;
-    //public short   sAllocated           = 0;
+
 
     // ==========================================================================
     // NV variables
@@ -77,7 +75,7 @@ public class Cmd11 extends VCard {
     private byte[] baCapabillities;
     private byte[] baAuthKasParams;
 
-    private byte[]       baCSS       = new byte[bCSS_SIZE];                                         // Commit Confirmation Signature
+    private byte[]       baCSS       = new byte[iCSS_SIZE];                                         // Commit Confirmation Signature
     private int          iTsn;                                                                      // Transaction Sequence Number;
 
     // not needed? private Sector   Shell;                                                          //     0: Shell
@@ -172,11 +170,11 @@ public class Cmd11 extends VCard {
                 SerializeOverhead + baPseudoUID.length +
                 SerializeOverhead + baCapabillities.length +
                 SerializeOverhead + baAuthKasParams.length +
-               (SerializeOverhead + sPAGE_SIZE)  * aIpe.length +
-               (SerializeOverhead + sPAGE_SIZE)  * aVrg.length +
-                SerializeOverhead + sPAGE_SIZE  /* TTLog */ +
+               (SerializeOverhead + iSECTOR_SIZE)  * aIpe.length +
+               (SerializeOverhead + iSECTOR_SIZE)  * aVrg.length +
+                SerializeOverhead + iSECTOR_SIZE  /* TTLog */ +
                 SerializeOverhead + directory.getLength() +
-               (SerializeOverhead + bPWD_SIZE)   * aPassword.length;
+               (SerializeOverhead + iPASSWORD_SIZE)   * aPassword.length;
     };
 
     // ========================================
@@ -471,15 +469,6 @@ public class Cmd11 extends VCard {
 
     private byte[] ConstructChallenge(SecretKey key) {                                              // *** ConstructChallenge
         Rng.nextBytes(baChallenge);                                                                 //  make random challenge
-        // ToDo: Debug code here.
-        //baChallenge[0] = (byte)0x61;                                                              //
-        //baChallenge[1] = (byte)0x62;                                                              //
-        //baChallenge[2] = (byte)0x63;                                                              //
-        //baChallenge[3] = (byte)0x64;                                                              //
-        //baChallenge[4] = (byte)0x65;                                                              //
-        //baChallenge[5] = (byte)0x66;                                                              //
-        //baChallenge[6] = (byte)0x67;                                                              //
-        //baChallenge[7] = (byte)0x68;                                                              //
 
         if (shell.getKsc() == 0x04) {                                                               // ? DESFire style
             try {                                                                                   //
@@ -487,11 +476,11 @@ public class Cmd11 extends VCard {
                 baChallengeTemp = Cip.doFinal(baChallenge);                                         //
             } catch (Exception e) {                                                                 //
                 Log.e(TAG, "ConstructChallenge: Encryption failed: " + e.getMessage());             //       report problems.
-                System.arraycopy(baChallenge, 0, baChallengeTemp, 0, bCHAL_SIZE);                   //
+                System.arraycopy(baChallenge, 0, baChallengeTemp, 0, iCHALLENGE_SIZE);                   //
             }                                                                                       //
         }                                                                                           //
         else {                                                                                      // ? CMD2 style
-            System.arraycopy(baChallenge, 0, baChallengeTemp, 0, bCHAL_SIZE);                       //
+            System.arraycopy(baChallenge, 0, baChallengeTemp, 0, iCHALLENGE_SIZE);                       //
         }                                                                                           //
                                                                                                     //
         return baChallengeTemp;                                                                     // That's all folks.
@@ -663,13 +652,13 @@ public class Cmd11 extends VCard {
             Cip.init(Cipher.ENCRYPT_MODE, KeyA, NullIV);                                                        // Encrypt our challenge data
             byte[] baChallengeTemp = Cip.doFinal(baChallenge);                                                  //
                                                                                                                 //
-            if ( ! BytesMatch(baApdu, ISO7816.OFFSET_CDATA, baChallengeTemp, 0, bCHAL_SIZE))    {               // Compare with offered data (time invariance does not matter, its RND and unrepeatable)
+            if ( ! BytesMatch(baApdu, ISO7816.OFFSET_CDATA, baChallengeTemp, 0, iCHALLENGE_SIZE))    {               // Compare with offered data (time invariance does not matter, its RND and unrepeatable)
                 throw new AuthenticationException();                                                            // 		Exit Mr Grumpy.
             }                                                                                                   //
                                                                                                                 //
             // Note: We only encrypt their data if they got ours right!											//
             Cip.init(Cipher.ENCRYPT_MODE, KeyB, NullIV);                                                        // POST's challenge
-            byte[] baResponse = Cip.doFinal(baApdu, (short) (ISO7816.OFFSET_CDATA + bCHAL_SIZE), bCHAL_SIZE);   // Calculate our reply @0 <= Response data to caller
+            byte[] baResponse = Cip.doFinal(baApdu, (short) (ISO7816.OFFSET_CDATA + iCHALLENGE_SIZE), iCHALLENGE_SIZE);   // Calculate our reply @0 <= Response data to caller
                                                                                                                 //
             byte[] baSessionSeed = new byte[16];                                                                // Build the session key seed data
             System.arraycopy(baChallenge,                    4, baSessionSeed,  0, 4);    //      c4c5c6c7
@@ -696,16 +685,16 @@ public class Cmd11 extends VCard {
         try {                                                                                                   //
             short sByteCount = (short)0;
             Cip.init(Cipher.ENCRYPT_MODE, Key, NullIV);
-            byte[] baRndA = Cip.doFinal(baApdu, ISO7816.OFFSET_CDATA, bCHAL_SIZE);                              // encrypt the PCD's response. Expecting [RndA :: Rot(RndB)]
+            byte[] baRndA = Cip.doFinal(baApdu, ISO7816.OFFSET_CDATA, iCHALLENGE_SIZE);                              // encrypt the PCD's response. Expecting [RndA :: Rot(RndB)]
 
             Cip.init(Cipher.ENCRYPT_MODE, Key, NullIV);
-            byte[] baRotRnd = Cip.doFinal(baApdu, ISO7816.OFFSET_CDATA+8, bCHAL_SIZE);
+            byte[] baRotRnd = Cip.doFinal(baApdu, ISO7816.OFFSET_CDATA+8, iCHALLENGE_SIZE);
 
-            for (int i = 0; i < bCHAL_SIZE; i++) {                                                              // DESFires CBC is weird.
+            for (int i = 0; i < iCHALLENGE_SIZE; i++) {                                                              // DESFires CBC is weird.
                 baRotRnd[i] ^= baApdu[ISO7816.OFFSET_CDATA + i];                                                //
             }                                                                                                   //
 
-            if (! BytesMatch(baRotRnd, 0, baChallenge, 1, bCHAL_SIZE-1)) {                                      // 7 out of 8 is good enough!
+            if (! BytesMatch(baRotRnd, 0, baChallenge, 1, iCHALLENGE_SIZE -1)) {                                      // 7 out of 8 is good enough!
                 throw new AuthenticationException();                                                            // 		Exit Mr Grumpy.
             }                                                                                                   //
 
@@ -720,7 +709,7 @@ public class Cmd11 extends VCard {
             baRotRnd[7] = baRndA[0];																	        // Rotate their RND
             System.arraycopy(baRndA, (short)1, baRotRnd, (short)0, (short)7);                                   //
             Cip.init(Cipher.ENCRYPT_MODE, Key, NullIV);                                                         //
-            return Cip.doFinal(baRotRnd, 0, bCHAL_SIZE);                                                        // Response = encrypted PCD's rotated RndA
+            return Cip.doFinal(baRotRnd, 0, iCHALLENGE_SIZE);                                                        // Response = encrypted PCD's rotated RndA
 
         }                                                                                                       //
         catch (AuthenticationException e) { throw e; }                                                          // Catch and re throw our crypto failures
@@ -902,24 +891,24 @@ public class Cmd11 extends VCard {
     }                                                                                               //
 
     private void UpdateCheckLength(byte[] baApdu, int iLen) throws ApduExitException {              // check parameters and collect data
-        if ((baApdu.length < (ISO7816.OFFSET_CDATA + bPWD_SIZE)) ||                                 // should be big enough to hold length at least
-            (iLen != (bPWD_SIZE +(baApdu[ISO7816.OFFSET_CDATA + bPWD_SIZE] & 0xFC) + 16)) ||        // length should be pwd::ipe::seal
-            ((baApdu[ISO7816.OFFSET_CDATA + bPWD_SIZE] & 0xFC) > sMAXIPE_SIZE) ) {                  // and <= limit to fit in an APDU
+        if ((baApdu.length < (ISO7816.OFFSET_CDATA + iPASSWORD_SIZE)) ||                                 // should be big enough to hold length at least
+            (iLen != (iPASSWORD_SIZE +(baApdu[ISO7816.OFFSET_CDATA + iPASSWORD_SIZE] & 0xFC) + 16)) ||        // length should be pwd::ipe::seal
+            ((baApdu[ISO7816.OFFSET_CDATA + iPASSWORD_SIZE] & 0xFC) > iIPE_MAXSIZE) ) {                  // and <= limit to fit in an APDU
             ApduException.Throw(SW.WRONG_LENGTH);											        //
         }                                                                                           //
     }                                                                                               //
 
     private void UpdateCheckPassword(byte[] baBuff, int iSlot) throws ApduExitException {			// check parameters and collect data
-        byte[] baTmp = Arrays.copyOfRange(baBuff, ISO7816.OFFSET_CDATA, ISO7816.OFFSET_CDATA + bPWD_SIZE);                 // Just the pwd bit
+        byte[] baTmp = Arrays.copyOfRange(baBuff, ISO7816.OFFSET_CDATA, ISO7816.OFFSET_CDATA + iPASSWORD_SIZE);                 // Just the pwd bit
         if (! MessageDigest.isEqual(baTmp, aPassword[iSlot].baBody)) {                              // Time invariant check of the password.
             ApduException.Throw(SW.AUTHENTICATION_FAILURE);                                         //      Fail. Bad luck!
         }                                                                                           //
     }                                                                                               //
 
     private void UpdateStoreHashAndExit(byte[] baBuff,  byte[] baPage, int iLen) throws ApduExitException {
-        System.arraycopy(baBuff, ISO7816.OFFSET_CDATA + bPWD_SIZE,                                  // source,          // Copy new contents to the page
+        System.arraycopy(baBuff, ISO7816.OFFSET_CDATA + iPASSWORD_SIZE,                                  // source,          // Copy new contents to the page
                          baPage, 0,                                                                 // destination      //
-                         iLen - bPWD_SIZE);                                                         // size.            //
+                         iLen - iPASSWORD_SIZE);                                                         // size.            //
         Hash.update(baBuff, 0, ISO7816.OFFSET_CDATA + iLen);                                        // Update the Hash  // Apdu
         Hash.update((byte) (SW.NO_ERROR >> 8));                                                     //                  // and it's SW
         Hash.update((byte) (SW.NO_ERROR & (byte) 0xFF));                                            //                  //
@@ -967,7 +956,7 @@ public class Cmd11 extends VCard {
     private void DoUpdateLog(byte[] baApdu) throws ApduExitException, Exception {                   // *** DoUpdateLog
         int iIpeNo   = shell.getE() -1;                                                             // IPE # E is reserved for the log
         int iDataLen = baApdu.length - ISO7816.OFFSET_CDATA;                                        // Payload size
-        if ((iDataLen < bPWD_SIZE) || (bPWD_SIZE + 0x30 < iDataLen)) {                              // length should be pwd::logRecord[..30]
+        if ((iDataLen < iPASSWORD_SIZE) || (iPASSWORD_SIZE + 0x30 < iDataLen)) {                    // length should be pwd::logRecord[..30]
             ApduException.Throw(SW.WRONG_LENGTH);                                                   //      Oops. it's not
         }                                                                                           //
         UpdateCheckPassword(baApdu, iIpeNo);                                                        // Password Happy ?
@@ -993,12 +982,12 @@ public class Cmd11 extends VCard {
     private void DoUpdateDir(byte[] baApdu) throws ApduExitException, Exception {                   // *** DoUpdateDir
         int iIpeNo   = shell.getE();                                                                // IPE # E+1 is reserved for the Directory
         int iDataLen = baApdu.length - ISO7816.OFFSET_CDATA;                                        // Payload size
-        if (iDataLen != bPWD_SIZE + directory.getLength()) {                                        // length should be pwd::logRecord[30]
+        if (iDataLen != iPASSWORD_SIZE + directory.getLength()) {                                   // length should be pwd::logRecord[30]
             ApduException.Throw(SW.WRONG_LENGTH);                                                   //      Oops. it's not
         }                                                                                           //
 
         UpdateCheckPassword(baApdu, iIpeNo);                                                        // Password Happy ?
-        directory.Update(baApdu, bPWD_SIZE + ISO7816.OFFSET_CDATA);                                 //
+        directory.Update(baApdu, iPASSWORD_SIZE + ISO7816.OFFSET_CDATA);                            //
         Hash.update(baApdu, 0, baApdu.length);                                                      // Update the Hash  // Apdu
         Hash.update((byte) (SW.NO_ERROR >> 8));                                                     //                  // and it's SW
         Hash.update((byte) (SW.NO_ERROR & (byte) 0xFF));                                            //                  //
@@ -1025,7 +1014,7 @@ public class Cmd11 extends VCard {
         if ((baApdu[ISO7816.OFFSET_P1] != 0) || (baApdu[ISO7816.OFFSET_P2] != 0)) {                 //  P1 & P2 should = 0
             ApduException.Throw(SW.INCORRECT_P1P2);                                                 //
         }
-        if (baApdu[ISO7816.OFFSET_LC] != bCSS_SIZE) {                                               // Check Len = sig size.
+        if (baApdu[ISO7816.OFFSET_LC] != iCSS_SIZE) {                                               // Check Len = sig size.
             ApduException.Throw(SW.WRONG_LENGTH);                                                   //
         }                                                                                           //
 
@@ -1042,7 +1031,7 @@ public class Cmd11 extends VCard {
         }                                                                                           //
 
         Sig.init(Cipher.ENCRYPT_MODE, SessionKey, new IvParameterSpec(new byte[8]));                //
-        baCSS = Sig.doFinal(baSig, baSig.length - bCSS_SIZE, bCSS_SIZE);                            // CSS response = enc(TS)
+        baCSS = Sig.doFinal(baSig, baSig.length - iCSS_SIZE, iCSS_SIZE);                            // CSS response = enc(TS)
         incTsn();																	                // Transaction number ++
         ImageSave();
         ApduException.Throw(baCSS, SW.NO_ERROR);
@@ -1069,8 +1058,8 @@ public class Cmd11 extends VCard {
     }
 
     private  byte[] makeSector(byte[] baV) {
-        if (baV.length == sPAGE_SIZE) return baV;
-        else return Arrays.copyOf(baV, sPAGE_SIZE);
+        if (baV.length == iSECTOR_SIZE) return baV;
+        else return Arrays.copyOf(baV, iSECTOR_SIZE);
     }
 
 

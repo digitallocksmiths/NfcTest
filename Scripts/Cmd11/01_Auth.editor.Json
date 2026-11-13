@@ -8,8 +8,8 @@
   "showLineEndings": false,
   "wordWrap": false,
   "showLineNumbers": true,
-  "showBookmarkMargin": false,
-  "showBreakpointMargin": false,
+  "showBookmarkMargin": true,
+  "showBreakpointMargin": true,
   "zoom": 0,
   "multiCaretEditing": true,
   "dragDropText": true,
@@ -18,5 +18,15 @@
   "showFolding": false,
   "showChangeIndicator": true,
   "bookmarks": [],
-  "breakpoints": []
+  "breakpoints": [],
+  "disabledBreakpoints": [
+    38,
+    69
+  ],
+  "toolbar": {
+    "execution": true,
+    "searchReplace": true,
+    "bookmarks": false,
+    "breakpoints": true
+  }
 }

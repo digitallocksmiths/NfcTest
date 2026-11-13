@@ -8,7 +8,7 @@
   "showLineEndings": false,
   "wordWrap": false,
   "showLineNumbers": true,
-  "showBookmarkMargin": false,
+  "showBookmarkMargin": true,
   "showBreakpointMargin": false,
   "zoom": 0,
   "multiCaretEditing": true,
@@ -18,5 +18,13 @@
   "showFolding": false,
   "showChangeIndicator": true,
   "bookmarks": [],
-  "breakpoints": []
+  "breakpoints": [],
+  "disabledBreakpoints": [],
+  "toolbar": {
+    "execution": true,
+    "searchReplace": true,
+    "quickFind": true,
+    "bookmarks": false,
+    "breakpoints": false
+  }
 }

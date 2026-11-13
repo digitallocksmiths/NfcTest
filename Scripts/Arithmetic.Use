@@ -13,65 +13,65 @@ var Wibble = 80F1234C;
 var x      = 0;
 
 
-@trace("");
-@trace("=============================");
-@trace("Right Shift Signed");
-@trace("=============================");
+@Print("");
+@Print("=============================");
+@Print("Right Shift Signed");
+@Print("=============================");
 
 for (x = 0; x <= 20; x++) {
-   @trace( Wibble >>>  x);
+   @Print( Wibble >>>  x);
 }
 
 
-@trace("");
-@trace("=============================");
-@trace("Right Shift Unsigned");
-@trace("=============================");
+@Print("");
+@Print("=============================");
+@Print("Right Shift Unsigned");
+@Print("=============================");
 
 for (x = 0; x <= 20; x++) {
-   @trace( Wibble >>  x);
+   @Print( Wibble >>  x);
 }
 
 
-@trace("");
-@trace("=============================");
-@trace("Left Shift");
-@trace("=============================");
+@Print("");
+@Print("=============================");
+@Print("Left Shift");
+@Print("=============================");
 
 for (x = 0; x <= 20; x+=1) {
-   @trace( Wibble <<  x);
+   @Print( Wibble <<  x);
 }
 
 
-@trace("");
-@trace("=============================");
-@trace("Rotate Left");
-@trace("=============================");
+@Print("");
+@Print("=============================");
+@Print("Rotate Left");
+@Print("=============================");
 
 for (x = 0; x <= 20; x+=1) {
-   @trace( Wibble <-<  x);
+   @Print( Wibble <-<  x);
 }
 
 
-@trace("");
-@trace("=============================");
-@trace("Rotate Right");
-@trace("=============================");
+@Print("");
+@Print("=============================");
+@Print("Rotate Right");
+@Print("=============================");
 
 for (x = 0; x <= 20; x+=1) {
-   @trace( Wibble >->  x);
+   @Print( Wibble >->  x);
 }
 
-@trace( "" );
+@Print( "" );
 
 var foo = 1234567;
-@trace( foo );
+@Print( foo );
 foo <-<= 1;
-@trace( foo );
+@Print( foo );
 foo >->= 2;
-@trace( foo );
+@Print( foo );
 foo <-<= 1;
-@trace( foo );
+@Print( foo );
 
 
 

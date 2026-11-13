@@ -3,14 +3,16 @@
 //  Test Description here
 //  more...
 //
-//  End of comments marks the end of this description.
+ // End of comments marks the end of this description.
 //    
 
 
-    @ResetA.cold;
+    @Reader.reset.cold;
 
-var Aid=A0000002164954534F2D31;
+var Aid  = A0000002164954534F2D31;
+var Apdu = 00A40400 Aid.Length Aid;
+var resp = @Reader.Apdu(Apdu);
 
-var Apdu = 00A40400 @Length(Aid) Aid;
-
-var resp = @Apdu(Apdu);
+@pause("bugger me");
+@Test(1 == 1, "Positive");
+@Test(1 != 1, "Negative");

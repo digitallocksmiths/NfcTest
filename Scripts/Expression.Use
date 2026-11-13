@@ -30,15 +30,12 @@ var Bar;
 
 Bar= 123;
 
-@Trace(V6 Bar);
+@Print(V6 Bar);
 
 var foo;
 var _foo;
 var __foo;
 var __foo_bar;
-// var _;
-//var _0foo;
-var __0Foo;
 
 
 

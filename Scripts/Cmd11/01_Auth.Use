@@ -11,25 +11,25 @@
 //  Exits with the card selected and authenticated.
 //
 
-    @ResetA.cold;  // Card
-    @ResetB.cold;  // Isam
+@ReaderA.Reset.cold;  // Card
+@ReaderB.Reset.cold;  // Isam
 
 
-var UID = @UidA;
+var UID = @ReaderA.Uid;
 
 var Resp;
 
 @PrintLn("Isam Password");
-Resp = @ApduB(90 18 00 00  10  @Itso.PwdI2F);
+Resp = @ReaderB.Apdu(90 18 00 00  10  @Itso.PwdI2F);
 @Assert(Resp[¬1..] == 9000, "Isam password OK?");
 
 @PrintLn("Media Select");
 var Aid    = @Itso.Aid;
 var Select = 00A40400 Aid.Length Aid;
-var Fci    = @ApduA(Select);
+var Fci    = @ReaderA.Apdu(Select);
 @Assert(Fci[¬1..] == 9000, "Select OK?");
 
-@PrintLn("Parsing the FCI");          @Debug(Fci);    
+@PrintLn("Parsing the FCI");             @Debug(Fci);    
 var Body_6F      = @Tlv(6F, Fci);        @Debug(Body_6F);
 var Body_A5      = @Tlv(A5, Body_6F);    @Debug(Body_A5);
 var Shell        = @Tlv(C0, Body_A5);    @Debug(Shell);
@@ -45,24 +45,24 @@ var Kas1Kas2     = @Tlv(C8, Body_A5);    @Debug(Kas1Kas2);
 
 if (PseudoUid.Length != 0) {                                            // Did we get a PseudoUID?
 
-    @PrintLn("Isam Begin (Pseudo UID");
+    @PrintLn("Isam Begin (Pseudo UID)");
     var Begin_Body = @Itso.DateX Shell PseudoUid Challenge;
     var Begin      = 90 48 00 Kas1Kas2[0] Begin_Body.Length Begin_Body  00;
-    var Isam_Chal  = @ApduB(Begin);
+    var Isam_Chal  = @ReaderB.Apdu(Begin);
     @Assert(Isam_Chal[¬1..] == 9000, "Begin OK?");
 
     @PrintLn("Media Authenticate (pseudo)");
     var Auth       = 90 10 00 00 (Isam_Chal.Length-2)  Isam_Chal[..¬2]  00;
-    var Media_Resp = @ApduA(Auth);
+    var Media_Resp = @ReaderA.Apdu(Auth);
     @Assert(Media_Resp[¬1..] == 9000, "Authenticate OK?");
 
     @PrintLn("Isam External Authenticate (pseudo)");
     var ExtAuth      = 00 82 00 Kas1Kas2[1] (Media_Resp.Length - 2) Media_Resp[..¬2];
-    var ExtAuth_Resp = @ApduB(ExtAuth);
+    var ExtAuth_Resp = @ReaderB.Apdu(ExtAuth);
     @Assert(ExtAuth_Resp[¬1..] == 9000, "External Authenticate OK?");
 
     @PrintLn("Media Reselect");
-    var Reselect_Resp = @ApduA(90 22 00 00 00);
+    var Reselect_Resp = @ReaderA.Apdu(90 22 00 00 00);
     @Assert(Reselect_Resp[¬1..] == 9000, "Reselect OK?");
 
     @PrintLn("Parsing the reselect FCI");   @Debug(Reselect_Resp ); 
@@ -76,26 +76,27 @@ if (PseudoUid.Length != 0) {                                            // Did w
     Kas1Kas2     = @Tlv(C8, Body_A5);       @Debug(Kas1Kas2);
 
     @PrintLn("Isam End (pseudo session)");
-    var End_Resp = @ApduB(90 58 00 00 00);
+    var End_Resp = @ReaderB.Apdu(90 58 00 00 00);
     @Assert(End_Resp[¬1..] == 9000, "End OK?");
 
 }
 
 
+
 @PrintLn("Isam Begin - true UID & Shell");
 var Begin_Body = @Itso.DateX Shell StaticUid Challenge;
 var Begin      = 90 48 00 Kas1Kas2[0] Begin_Body.Length Begin_Body  00;
-var Isam_Chal  = @ApduB(Begin);
+var Isam_Chal  = @ReaderB.Apdu(Begin);
 @Assert(Isam_Chal[¬1..] == 9000, "Begin OK?");
 
 @PrintLn("Media Authenticate");
 var Auth       = 90 10 00 00 (Isam_Chal.Length-2)  Isam_Chal[..¬2] 00;
-var Media_Resp = @ApduA(Auth);
+var Media_Resp = @ReaderA.Apdu(Auth);
 @Assert(Media_Resp[¬1..] == 9000, "Authenticate OK?");
 
 @PrintLn("Isam External Authenticate");
 var ExtAuth      = 00 82 00 Kas1Kas2[1] (Media_Resp.Length - 2) Media_Resp[..¬2];
-var ExtAuth_Resp = @ApduB(ExtAuth);
+var ExtAuth_Resp = @ReaderB.Apdu(ExtAuth);
 @Test(ExtAuth_Resp[¬1..] == 9000, "External Authenticate OK?");
 
 @Debug;
