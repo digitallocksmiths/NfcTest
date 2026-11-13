@@ -53,7 +53,7 @@ public class MyHostApduService extends HostApduService {
     }
 
     @Override
-    public byte[] processCommandApdu(byte[] commandApdu, Bundle extras) {                           // process command
+    public byte[] processCommandApdu(byte[] commandApdu, Bundle extras)  {                           // process command
         if (commandApdu == null) {
             return VCard.Response(VCard.SW.CLA_NOT_SUPPORTED);
         }
@@ -79,13 +79,16 @@ public class MyHostApduService extends HostApduService {
                     byte[] baAid    = Arrays.copyOfRange(commandApdu, 5, 5 + commandApdu[4]);       // Get the AID we answered to
                     byte[] baFci    = vcard.Select(baAid);                                          // Do the selection and get the FCI in response.
                     return VCard.Response(baFci, VCard.SW.NO_ERROR);                                // return it with the happy message.
-                } catch (VCard.VirtualCardException e) {
+                }
+                catch (VCard.VirtualCardException e) {
                     Log.d(TAG, "SELECT failed: " + e.getMessage());
                     if (vcard != null) {                                                            // don't run on a half-loaded image
                         vcard.Dispose();
                         vcard = null;
                     }
                     return VCard.Response(VCard.SW.APPLET_SELECT_FAILED);
+                } catch (VCard.VCardIntegrityException e) {
+                    throw new RuntimeException(e);
                 }
         }
 
@@ -93,8 +96,12 @@ public class MyHostApduService extends HostApduService {
             return VCard.Response(VCard.SW.CLA_NOT_SUPPORTED);
         }
 
-        // ToDo: Add sanity check here to ensure APDU is well formed one of 4 classes
-        return vcard.Dispatch(commandApdu);
+        try {
+            // ToDo: Add sanity check here to ensure APDU is well formed one of 4 classes
+            return vcard.Dispatch(commandApdu);
+        } catch (VCard.VCardIntegrityException e) {
+            throw new RuntimeException(e);
+        }
     }
 
 

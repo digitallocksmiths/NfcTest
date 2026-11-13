@@ -41,9 +41,8 @@ public class Cmd11 extends VCard {
     private static final int    iSECTOR_SIZE    = 256;                                              // The size of a storage block used for IPEs, VRGs, LOGs and Directory
     private static final int    iPASSWORD_SIZE  =   8;                                              // Size of Password Data
     // ToDo: ITSO ref is 228. Who's right?
-    public  static final int    iIPE_MAXSIZE    = (255 - 8 - 16);                                   // pwd[8] :: Ipe[x] :: Seal[16]  =< 255 bytes.
+    public  static final int    iIPE_MAXSIZE    = (255 - iPASSWORD_SIZE - 16);                      // pwd[8] :: Ipe[x] :: Seal[16]  =< 255 bytes.
     public  static final int    iCSS_SIZE       =  8;                                               // Commit Confirmation Signature Size.
-
 
     private static class Sector   { byte[] baBody   = new byte[iSECTOR_SIZE]; }                     // Sector is a storage unit. Java is messy with arrays of arrays (hence this)
     private static class Password { byte[] baBody   = new byte[iPASSWORD_SIZE];  }                  // Passwords. same again and just as many.
@@ -51,29 +50,29 @@ public class Cmd11 extends VCard {
     // ==========================================================================
     // Clear on reset 'RAM' variables
 
-    public byte[]  baChallenge          = new byte[iCHALLENGE_SIZE];                                // Mutual Authenticat Challenge (random data)
-    public byte[]  baChallengeTemp      = new byte[iCHALLENGE_SIZE];                                // Holds the mangled Challenge delivered to the IFD.
-
-    // ToDo: Make these booleans a secure boolean variant.
-    public boolean fAuthenticated       = false;                                                    // Bool vars
-    public boolean fPseudoAuthenticated = false;
-    public boolean fUsingPseudoShellUID = false;
-
+    public byte[]  baChallenge           = new byte[iCHALLENGE_SIZE];                               // Mutual Authenticat Challenge (random data)
+    public byte[]  baChallengeTemp       = new byte[iCHALLENGE_SIZE];                               // Holds the mangled Challenge delivered to the IFD.
+    private sbool  sfAuthenticated       = sbool.False;                                             // secure boolean flag vars. Are we fully authenticated ?
+    private sbool  sfPseudoAuthenticated = sbool.False;                                             //                           Are we authenticated against the pseudo UID/Shell ?
+    private sbool  sfUsingPseudoShellUID = sbool.False;                                             //                           Should we be expecting a pseudo UID/Shell ?
 
     // ==========================================================================
     // NV variables
+    //      this is the stuff we preserve. In a card it would be in NVM
 
-    private byte[] baAid;
-    private byte[] mAuthDesKeyA;
-    private byte[] mAuthDesKeyB;
-    private byte[] mAuthPseudoKeyA;
-    private byte[] mAuthPseudoKeyB;
+    // ToDo: Shouldn't AID be in the superclass?  thionk about it. it is defined by the CM's perso so not fixed size
+    private byte[] baAid;                                                                           // Our AID needed for FCI regeneration
+
+    private byte[] mAuthDesKeyA;                                                                    // Authentication key, sets up the session key
+    private byte[] mAuthDesKeyB;                                                                    // KSC3 uses a second Auth key. This is it.
+    private byte[] mAuthPseudoKeyA;                                                                 // Same again but for the pseudo UID/Shell
+    private byte[] mAuthPseudoKeyB;                                                                 //
     //private byte[] baShell;
-    private byte[] baPseudoShell;
-    private byte[] baUID;
-    private byte[] baPseudoUID;
-    private byte[] baCapabillities;
-    private byte[] baAuthKasParams;
+    private byte[] baPseudoShell;                                                                   // Contents of the pseudo shell (or null/empty for static uid)
+    private byte[] baUID;                                                                           // the true UID of the card
+    private byte[] baPseudoUID;                                                                     // the perso assigned UID for pseudo shell authentication
+    private byte[] baCapabillities;                                                                 // what command set is supported. (Only 00 is defined in V2.1.5)
+    private byte[] baAuthKasParams;                                                                 // Was KAS values are used in Begin and ExtAuth.
 
     private byte[]       baCSS       = new byte[iCSS_SIZE];                                         // Commit Confirmation Signature
     private int          iTsn;                                                                      // Transaction Sequence Number;
@@ -86,6 +85,10 @@ public class Cmd11 extends VCard {
     private Password[]   aPassword;                                                                 // 1-E+1: Password  (0-E)
 
 
+// ==========================================================================
+// Working variables
+//
+
     private       SecretKey       DesKeyA;                                                          // initialized on image load.
     private       SecretKey       DesKeyB;                                                          //
     private       SecretKey       DesKeyPseudoA;                                                    //
@@ -97,13 +100,7 @@ public class Cmd11 extends VCard {
     private final MessageDigest   Hash;                                                             // session MAC generator
     private final IvParameterSpec NullIV = new IvParameterSpec(new byte[8]);                        // IV = 0.0.0.0.0.0.0.0
 
-
-
-//  public static Checksum      Crc;                                                                //        CRC resource.
-    public final  Cipher        Sig;                                                                // 		  MAC verifyer/generator. (DES needs to use a Cipher and grab the result)
-//  public static DESKey        SessionKey;                                                         //        ephemeral (transient) session key.
-//  public static MessageDigest Hash;                                                               //		  Apdu Message digest.
-
+    public final  Cipher          Sig;                                                              // MAC verifyer/generator. (In Java, DES needs to use a Cipher and use the chained IV)
 
     // ========================================
     // Constructor
@@ -352,9 +349,9 @@ public class Cmd11 extends VCard {
 
         Arrays.fill(baChallenge,     (byte)0);
         Arrays.fill(baChallengeTemp, (byte)0);
-        fAuthenticated       = false;
-        fPseudoAuthenticated = false;
-        fUsingPseudoShellUID = (baPseudoShell != null && baPseudoShell.length > 0);                 // if we have a pseudo shell, we are "using it".
+        sfAuthenticated       = sbool.False;
+        sfPseudoAuthenticated = sbool.False;
+        sfUsingPseudoShellUID = (baPseudoShell != null && baPseudoShell.length > 0) ? sbool.True : sbool.False;     // if we have a pseudo shell, we are "using it".
     }
 
     // =============================================================================================    Dispose (abstract implementation)
@@ -388,8 +385,8 @@ public class Cmd11 extends VCard {
         Scrub(baChallengeTemp);                                                                     //
         Scrub(baCSS);                                                                               //
         Hash.reset();                                                                               //      APDU hash holds session traffic
-        fAuthenticated       = false;                                                               //
-        fPseudoAuthenticated = false;                                                               //
+        sfAuthenticated       = sbool.invalid;                                                      //
+        sfPseudoAuthenticated = sbool.invalid;                                                      //
     }
 
     // =============================================================================================    DeleteCheck (abstract implementation)
@@ -413,10 +410,14 @@ public class Cmd11 extends VCard {
     // Select()
     //      construct and return the FCI
     // ========================================
-    public byte[] Select(byte[] baAid) {                                                            // *** Card select
+    public byte[] Select(byte[] baAid) throws VCardIntegrityException {                             // *** Card select
         Log.d(TAG, "Select");                                                                       //
-        if (fUsingPseudoShellUID) { return WrapAsFci(baAid, FciBuildRandom()); }                    // Build FCI for random  UID host
-        else                      { return WrapAsFci(baAid, FciBuildStatic()); }                    //               static  UID host
+        if      (sfUsingPseudoShellUID == sbool.True)  { return WrapAsFci(baAid, FciBuildRandom()); }   // Build FCI for random  UID host
+        else if (sfUsingPseudoShellUID == sbool.False) { return WrapAsFci(baAid, FciBuildStatic()); }   //               static  UID host
+        else {
+            Log.e(TAG, "Select: Boolean is not TRUE or FALSE.");
+            throw new VCardIntegrityException("Select: Boolean is not TRUE or FALSE.");
+        }
     }                                                                                               //
 
 
@@ -537,7 +538,7 @@ public class Cmd11 extends VCard {
                 return Response(SW.CLA_NOT_SUPPORTED);                                              //      nothing else is good enough.
             }                                                                                       //
 
-            if (!fAuthenticated) {                                                                  // Not authenticated yet...
+            if (sfAuthenticated == sbool.False) {                                                   // Not authenticated yet...
                 switch (baApdu[ISO7816.OFFSET_INS]) {                                               //      Which INS do we want ?
                     case bINS_Authenticate:            DoAuthenticate(baApdu);  break;              //      supported
                     case bINS_ReadIpe:                 DoReadIpe(baApdu);       break;              //      ..
@@ -554,7 +555,7 @@ public class Cmd11 extends VCard {
                         ApduException.Throw(SW.INS_NOT_SUPPORTED);                                  //          unrecognised
                 }                                                                                   //
             }                                                                                       //
-            else if (fAuthenticated) {                                                              // Authenticated, so Secure session active
+            else if (sfAuthenticated == sbool.True) {                                               // Authenticated, so Secure session active
                 switch (baApdu[ISO7816.OFFSET_INS]) {                                               //      Which INS do we want ?
                     case bINS_ReadIpe:                 DoReadIpe(baApdu);      break;               //      supported
                     case bINS_ReadVrg:                 DoReadVrg(baApdu);      break;               //      ..
@@ -570,8 +571,9 @@ public class Cmd11 extends VCard {
                     default:                                                                        //      all others
                         ApduException.Throw(SW.INS_NOT_SUPPORTED);                                  //          unrecognised
                 }                                                                                   //
-            } else {
-                ApduException.Throw(SW.SECURITY_STATUS_NOT_SATISFIED);
+            } else {                                                                                // not true or false == trouble.
+                Log.e(TAG, "Dispatch: Boolean is not TRUE or FALSE.");
+                throw new VCardIntegrityException("Dispatch: Boolean is not TRUE or FALSE.");
             }
         }
         catch (ApduExitException e) {
@@ -598,11 +600,15 @@ public class Cmd11 extends VCard {
     // #  See Also:
     // #
     // ##########################################################################
-    private void DoAuthenticate(byte[] baApdu) throws ApduExitException {                           // *** DoAuthenticate
+    private void DoAuthenticate(byte[] baApdu) throws ApduExitException, VCardIntegrityException {  // *** DoAuthenticate
 
-        if (fAuthenticated) {												                        // Should not be permitted if we are already authenticated.
+        if (sfAuthenticated == sbool.True) {   		     					                        // Should not be permitted if we are already authenticated.
             ApduException.Throw(SW.SECURITY_STATUS_NOT_SATISFIED);							     	//      Not happy response
         }																							//
+        else if (sfAuthenticated != sbool.False) {                                                  //
+            Log.e(TAG, "DoAuthenticate: Boolean is not TRUE or FALSE.");
+            throw new VCardIntegrityException("DoAuthenticate: Boolean is not TRUE or FALSE.");
+        }
 
         if ((baApdu.length < ISO7816.OFFSET_LC) || (baApdu[ISO7816.OFFSET_LC] != 16)) {				// Auth expects 16 bytes from the ISAM.
             ApduException.Throw(SW.WRONG_LENGTH);													//      Not happy response
@@ -610,32 +616,18 @@ public class Cmd11 extends VCard {
 
         byte[] baResponse;                                                                          // response to the challenge's response.
         try {
-            if (shell.getKsc() == 0x03) {                                                           // CMD2 sytle authenticate.
-                if ((fUsingPseudoShellUID) && (!fPseudoAuthenticated)) {                            // PseudoShell used and not yet authenticated
-                    baResponse = GenSessionKey_Cmd2Style(baApdu, DesKeyPseudoA, DesKeyPseudoB);     // Authenticate (Exception on failure)
-                    fPseudoAuthenticated = true;                                                    // PseudoAuth state.
-                } else {                                                                            // Real Shell Auth
-                    baResponse = GenSessionKey_Cmd2Style(baApdu, DesKeyA, DesKeyB);                 // Authenticate (Exception on failure)
-                    fAuthenticated = true;                                                          // Auth state.
-                    Hash.reset();                                                                   // initialise Apdu Hash
-                }
-            }
-            else {                                                                                  //  Desfire style authentication
-                 if ((fUsingPseudoShellUID) && (!fPseudoAuthenticated)) {                           // PseudoShell used and not yet authenticated
-                    baResponse = GenSessionKey_Cmd7Style(baApdu, DesKeyPseudoA);                    // Authenticate (Exception on failure)
-                    fPseudoAuthenticated = true;                                                    // PseudoAuth state.
-                } else {                                                                            // Real Shell Auth
-                    baResponse = GenSessionKey_Cmd7Style(baApdu, DesKeyA);                          // Authenticate (Exception on failure)
-                    fAuthenticated = true;                                                          // Auth state.
-                    Hash.reset();                                                                   // initialise Apdu Hash
-                }
-            }
+            if      (shell.getKsc() == 0x03) { baResponse = DoAuthenticateKsc03(baApdu); }          // CMD2 style authenticate. (Exception on failure)
+            else if (shell.getKsc() == 0x04) { baResponse = DoAuthenticateKsc04(baApdu); }          // Desfire style authentication
+            else {                                                                                  // Anything else is problematic.
+                Log.e(TAG, "DoAuthenticate: KSC is not 0x03 or 0x04.");                             //
+                throw new VCardIntegrityException("DoAuthenticate: KSC is not 0x03 or 0x04.");      //
+            }                                                                                       //
             ApduException.Throw(baResponse, SW.NO_ERROR);											// Exit Happy.
         }
         catch (AuthenticationException e) {                                                         // Session key crypto failures end here.
             ApduException.Throw(SW.SECURITY_STATUS_NOT_SATISFIED);                                  //      Not happy response
         }                                                                                           //
-        catch (ApduExitException e) {                                                               //
+        catch (ApduExitException e) {                                                               // SW error responses will be rethrown
             throw e;                                                                                //
         }                                                                                           //
         catch (Exception e) {                                                                       // All other exceptions end here.
@@ -644,6 +636,67 @@ public class Cmd11 extends VCard {
         }
     }
 
+    private byte[] DoAuthenticateKsc03(byte[] baApdu) throws ApduExitException,
+                                                             VCardIntegrityException,
+                                                             AuthenticationException {              // *** DoAuthenticate CMD2 style
+        byte[] baResponse = null;
+        if (sfUsingPseudoShellUID == sbool.True) {                                                  // PseudoShell used
+            if (sfPseudoAuthenticated == sbool.False) {                                             //      and not yet authenticated
+                baResponse = GenSessionKey_Cmd2Style(baApdu, DesKeyPseudoA, DesKeyPseudoB);         //          Authenticate (Exception on failure)
+                sfPseudoAuthenticated = sbool.True;                                                 //          OK
+            }
+            else if (sfPseudoAuthenticated == sbool.True) {                                         //      and already authenticated
+                baResponse = GenSessionKey_Cmd2Style(baApdu, DesKeyA, DesKeyB);                     //          Authenticate (Exception on failure)
+                sfAuthenticated = sbool.True;                                                       //          Auth state.
+                Hash.reset();                                                                       //          initialise Apdu Hash
+            }                                                                                       //
+            else {                                                                                  //      anything else is a problem
+                Log.e(TAG, "DoAuthenticate: Boolean is not TRUE or FALSE.");                        //
+                throw new VCardIntegrityException("DoAuthenticate: Boolean is not TRUE or FALSE.");
+            }
+        }
+        else if (sfUsingPseudoShellUID == sbool.False) {                                            // Normal shell being used
+            baResponse = GenSessionKey_Cmd2Style(baApdu, DesKeyA, DesKeyB);                         //      Authenticate (Exception on failure)
+            sfAuthenticated = sbool.True;                                                           //      Auth state.
+            Hash.reset();                                                                           //      initialise Apdu Hash
+        }
+        else {                                                                                      // undetermined shell being used
+            Log.e(TAG, "DoAuthenticate: Boolean is not TRUE or FALSE.");                            //      Not happy about this!
+            throw new VCardIntegrityException("DoAuthenticate: Boolean is not TRUE or FALSE.");     //
+        }                                                                                           //
+        return baResponse;                                                                          // We have data. return it
+    }
+
+    private byte[] DoAuthenticateKsc04(byte[] baApdu) throws ApduExitException,
+                                                             VCardIntegrityException,
+                                                             AuthenticationException {              // *** DoAuthenticate CMD7 style
+        byte[] baResponse = null;
+        if (sfUsingPseudoShellUID == sbool.True) {                                                  // PseudoShell used
+            if (sfPseudoAuthenticated == sbool.False) {                                             //      and not yet authenticated
+                baResponse = GenSessionKey_Cmd7Style(baApdu, DesKeyPseudoA);                        //          Authenticate (Exception on failure)
+                sfPseudoAuthenticated = sbool.True;                                                 //          PseudoAuth state.
+            }
+            else if (sfPseudoAuthenticated == sbool.True) {                                         //      and already authenticated
+                baResponse = GenSessionKey_Cmd7Style(baApdu, DesKeyA);                              //          Authenticate (Exception on failure)
+                sfAuthenticated = sbool.True;                                                       //          Auth state.
+                Hash.reset();                                                                       //          initialise Apdu Hash
+            }                                                                                       //
+            else {                                                                                  //      anything else is a problem
+                Log.e(TAG, "DoAuthenticate: Boolean is not TRUE or FALSE.");                        //
+                throw new VCardIntegrityException("DoAuthenticate: Boolean is not TRUE or FALSE."); //
+            }
+        }
+        else if (sfUsingPseudoShellUID == sbool.False) {                                            // Normal shell being used
+            baResponse = GenSessionKey_Cmd7Style(baApdu, DesKeyA);                                  //      Authenticate (Exception on failure)
+            sfAuthenticated = sbool.True;                                                           //      Auth state.
+            Hash.reset();                                                                           //      initialise Apdu Hash
+        }
+        else {                                                                                      // undetermined shell being used
+            Log.e(TAG, "DoAuthenticate: Boolean is not TRUE or FALSE.");                            //      Not happy about this!
+            throw new VCardIntegrityException("DoAuthenticate: Boolean is not TRUE or FALSE.");     //
+        }                                                                                           //
+        return baResponse;                                                                          // We have data. return it
+    }
 
 
     private	byte[] GenSessionKey_Cmd2Style(byte[] baApdu, SecretKey KeyA, SecretKey KeyB) 	                    // Verify PCD's response to our challenge
@@ -732,7 +785,7 @@ public class Cmd11 extends VCard {
     // #  See Also:
     // #
     // ##########################################################################
-    private void DoReadIpe(byte[] baApdu)  throws ApduExitException {                                                       // *** DoReadIpe
+    private void DoReadIpe(byte[] baApdu) throws ApduExitException, VCardIntegrityException {       // *** DoReadIpe
         int iIpeNo = baApdu[ISO7816.OFFSET_P1] & 0xFF;
 
         if ((iIpeNo == 0) ||                                                                        // Check != 0
@@ -752,19 +805,32 @@ public class Cmd11 extends VCard {
         int iIpeSize         = (aIpe[iIpeNo-1].baBody[0] & 0xfC);                                   // Size of IPE body + InstanceID + seal.
         byte[] baDeliverable = new byte[5 + iIpeSize + 16];                                         // Get the IPE
 
-        System.arraycopy(directory.getEntry(iIpeNo), 0, baDeliverable, 0, 5);                                 // Dir entry +
-        if (fAuthenticated) { System.arraycopy(aIpe[iIpeNo - 1].baBody, 0, baDeliverable, 5, iIpeSize+16);  } // Auth : Body + seal
-        else                { System.arraycopy(aIpe[iIpeNo - 1].baBody, 0, baDeliverable, 5, iIpeSize);       //      : Body +
-                              Arrays.fill(baDeliverable, 5+iIpeSize, 5+iIpeSize+16, (byte)0xff); }            //      :        redacted
+        System.arraycopy(directory.getEntry(iIpeNo), 0, baDeliverable, 0, 5);                       // Dir entry +
+        if (sfAuthenticated == sbool.True) {                                                       // Auth : Body + seal
+            System.arraycopy(aIpe[iIpeNo - 1].baBody, 0, baDeliverable, 5, iIpeSize+16);
+        }
+        else if  (sfAuthenticated == sbool.False) {
+            System.arraycopy(aIpe[iIpeNo - 1].baBody, 0, baDeliverable, 5, iIpeSize);               //      : Body +
+            Arrays.fill(baDeliverable, 5 + iIpeSize, 5 + iIpeSize + 16, (byte) 0xff);               //      :        redacted
+        }
+        else {
+            Log.e(TAG, "DoReadIpe: Boolean is not TRUE or FALSE.");
+            throw new VCardIntegrityException("DoReadIpe: Boolean is not TRUE or FALSE.");
+        }
+
         ResponseHashedIfNecessary(baApdu, baDeliverable, SW.NO_ERROR);
     }
 
-    private void  ResponseHashedIfNecessary(byte[] baApdu, byte[] baBuff, short sStatusWord) throws ApduExitException {
-        if (fAuthenticated) {
+    private void  ResponseHashedIfNecessary(byte[] baApdu, byte[] baBuff, short sStatusWord) throws ApduExitException, VCardIntegrityException {
+        if (sfAuthenticated == sbool.True) {
             Hash.update(baApdu);                                                                    // Command APDU
             Hash.update(baBuff);                                                                    // Response data
             Hash.update((byte) (sStatusWord >> 8));
             Hash.update((byte) (sStatusWord & (byte) 0xFF));
+        }
+        else if (sfAuthenticated != sbool.False) {
+            Log.e(TAG, "ResponseHashedIfNecessary: Boolean is not TRUE or FALSE.");
+            throw new VCardIntegrityException("ResponseHashedIfNecessary: Boolean is not TRUE or FALSE.");
         }
         ApduException.Throw(baBuff, sStatusWord);
     }
@@ -783,7 +849,7 @@ public class Cmd11 extends VCard {
     // #  See Also:
     // #
     // ##########################################################################
-    private void DoReadVrg(byte[] baApdu) throws ApduExitException {                                                       // *** DoReadVrg
+    private void DoReadVrg(byte[] baApdu) throws ApduExitException, VCardIntegrityException {       // *** DoReadVrg
         int iIpeNo = baApdu[ISO7816.OFFSET_P1] & 0xFF;
 
         if ((iIpeNo == 0) ||                                                                        // Check != 0
@@ -803,10 +869,18 @@ public class Cmd11 extends VCard {
         int iVrgSize         = (aVrg[iIpeNo-1].baBody[0] & 0xfC);                                   // Size of VRG body + InstanceID + seal.
         byte[] baDeliverable = new byte[5 + iVrgSize + 16];                                         // Get the VRG
 
-        System.arraycopy(directory.getEntry(iIpeNo), 0, baDeliverable, 0, 5);                                 // Dir entry +
-        if (fAuthenticated) { System.arraycopy(aVrg[iIpeNo - 1].baBody, 0, baDeliverable, 5, iVrgSize+16);  } // Auth : Body + seal
-        else                { System.arraycopy(aVrg[iIpeNo - 1].baBody, 0, baDeliverable, 5, iVrgSize);       //      : Body +
-                              Arrays.fill(baDeliverable, 5+iVrgSize, 5+iVrgSize+16, (byte)0xff); }            //      :        redacted
+        System.arraycopy(directory.getEntry(iIpeNo), 0, baDeliverable, 0, 5);                       // Dir entry +
+        if (sfAuthenticated == sbool.True) {
+            System.arraycopy(aVrg[iIpeNo - 1].baBody, 0, baDeliverable, 5, iVrgSize+16);            // Auth : Body + seal
+        }
+        else if (sfAuthenticated == sbool.False) {
+            System.arraycopy(aVrg[iIpeNo - 1].baBody, 0, baDeliverable, 5, iVrgSize);               //      : Body +
+            Arrays.fill(baDeliverable, 5 + iVrgSize, 5 + iVrgSize + 16, (byte) 0xff);               //      :        redacted
+        }
+        else {
+            Log.e(TAG, "DoReadVrg: Boolean is not TRUE or FALSE.");
+            throw new VCardIntegrityException("DoReadVrg: Boolean is not TRUE or FALSE.");
+        }
         ResponseHashedIfNecessary(baApdu, baDeliverable, SW.NO_ERROR);
     }
 
@@ -823,7 +897,7 @@ public class Cmd11 extends VCard {
     // #  See Also:
     // #
     // ##########################################################################
-    private void DoReadLog(byte[] baApdu) throws ApduExitException {                                                       // *** DoReadLog
+    private void DoReadLog(byte[] baApdu) throws ApduExitException, VCardIntegrityException {       // *** DoReadLog
         if ((baApdu[ISO7816.OFFSET_P1] < 1) || (baApdu[ISO7816.OFFSET_P1] > 5)	||                  // record count, 1..5 == OK
             (baApdu[ISO7816.OFFSET_P2] != 0)) {							                            //     P2 must be zero
             ApduException.Throw(SW.INCORRECT_P1P2);                                                 //  Go home if we don't like it.
@@ -853,11 +927,26 @@ public class Cmd11 extends VCard {
     // #  See Also:
     // #
     // ##########################################################################
-    private void DoReselect(byte[] baApdu) throws ApduExitException {                                                      // *** DoReselect
+    private void DoReselect(byte[] baApdu) throws ApduExitException, VCardIntegrityException {      // *** DoReselect
         byte[] baA5Material;
-        if (fUsingPseudoShellUID && !fPseudoAuthenticated) { baA5Material = FciBuildRandom();   }   // if pseudo shell and not pseudo authenticated, reissue the Random UID FCI
-        else                                               { baA5Material = FciBuildReselect(); }   // else real shell or pseudo authenticated OK
-        ApduException.Throw( WrapAsFci(null, baA5Material), SW.NO_ERROR);                           //
+
+        if (sfUsingPseudoShellUID == sbool.True) {                                                  // if pseudo shell ...
+            if      (sfPseudoAuthenticated == sbool.False) { baA5Material = FciBuildRandom(); }     //                 and not pseudo authenticated, reissue the Random UID FCI
+            else if (sfPseudoAuthenticated == sbool.True)  { baA5Material = FciBuildReselect(); }   //                 and pseudo authenticated, reissue the Reselect FCI
+            else {                                                                                  //                 otherwise we are in trouble!
+                Log.e(TAG, "DoReselect: Boolean is not TRUE or FALSE.");
+                throw new VCardIntegrityException("DoReselect: Boolean is not TRUE or FALSE.");
+            }
+        }
+        else if (sfUsingPseudoShellUID == sbool.False) {                                            // if normal shell, just issue the Reselect FCI
+            baA5Material = FciBuildReselect();                                                      //
+        }                                                                                           //
+        else {                                                                                      // not pseudo & not normal ...
+            Log.e(TAG, "DoReselect: Boolean is not TRUE or FALSE.");                                //    seriously unhappy
+            throw new VCardIntegrityException("DoReselect: Boolean is not TRUE or FALSE.");         //
+        }                                                                                           //
+
+        ApduException.Throw( WrapAsFci(null, baA5Material), SW.NO_ERROR);                           // FCI build without the application AID.
     }
 
 
@@ -1009,7 +1098,7 @@ public class Cmd11 extends VCard {
     // #
     // ##########################################################################
     private void DoEndSession(byte[] baApdu) throws ApduExitException, Exception {                  // *** DoEndSession
-        fAuthenticated = false;                                                                     // Always terminate the SM now this has been called.
+        sfAuthenticated = sbool.False;                                                              // Always terminate the SM now this has been called.
 
         if ((baApdu[ISO7816.OFFSET_P1] != 0) || (baApdu[ISO7816.OFFSET_P2] != 0)) {                 //  P1 & P2 should = 0
             ApduException.Throw(SW.INCORRECT_P1P2);                                                 //

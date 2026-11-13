@@ -13,8 +13,13 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import java.security.ProviderException;
+import java.security.cert.CertificateException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Scanner;
@@ -38,6 +43,29 @@ import javax.security.auth.DestroyFailedException;
 
 public abstract class VCard {
     private static final String TAG = "VCard";
+
+
+    // =============================================================================================
+    // Secure (none binary boolean)
+    //
+
+    private static final int SecInvalid = 0;
+    private static final int SecTrue    = 0x25A0;
+    private static final int SecFalse   = 0x7051;
+
+    protected enum sbool {
+        invalid(SecInvalid),
+        True(SecTrue),
+        False(SecFalse);
+
+        private final int value;
+        sbool(int value)      { this.value = value; }
+        public int getValue() { return value; }
+    }
+
+    protected static class VCardIntegrityException extends Exception {
+        public VCardIntegrityException(String szMsg) { super(szMsg); }
+    }
 
 
     // =============================================================================================
@@ -91,13 +119,14 @@ public abstract class VCard {
             keyStore = KeyStore.getInstance(szKeyStore);
             keyStore.load(null);
         }
-        catch (  java.security.cert.CertificateException |
-                 java.io.IOException |
-                 java.security.KeyStoreException |
-                 java.security.NoSuchAlgorithmException e ) {
+        catch (  CertificateException |
+                 IOException |
+                 KeyStoreException |
+                 NoSuchAlgorithmException e ) {
             Log.d(TAG, "Key store load went tits up");
-            throw new VCard.VirtualCardException("VCard: Key store load went tits up");
+            throw new VirtualCardException("VCard: Key store load went tits up");
         }
+
     }
 
     // ===============================================
@@ -129,7 +158,7 @@ public abstract class VCard {
             }
             return key;
         }
-        catch (java.security.GeneralSecurityException | java.security.ProviderException e) {
+        catch (GeneralSecurityException | ProviderException e) {
             Log.d(TAG, "KeyGet: " + szAlias + ": " + e.getMessage());
             throw new VirtualCardException("VCard: key access failed: " + szAlias);
         }
@@ -139,7 +168,7 @@ public abstract class VCard {
         try {
             if (keyStore.containsAlias(szAlias)) { keyStore.deleteEntry(szAlias); }
         }
-        catch (java.security.KeyStoreException e) {
+        catch (KeyStoreException e) {
             Log.d(TAG, "KeyDelete: " + szAlias + ": " + e.getMessage());
         }
     }
@@ -157,7 +186,7 @@ public abstract class VCard {
     //      Every card owns its shell.
     //
     // ===============================================
-    public VCard(byte[] baShell) throws VCard.VirtualCardException {                                // constructor invoked via subclass.
+    public VCard(byte[] baShell) throws VirtualCardException {                                // constructor invoked via subclass.
         this.baShell = baShell;
         this.shell   = new Shell(baShell);
         TitleSet("Uninitialized Card Image");
@@ -467,8 +496,8 @@ public abstract class VCard {
     protected abstract void     Reset()                              throws VirtualCardException;   // Called on Reset.
     protected abstract void     Dispose();                                                          // Overwrite secrets before the instance is abandoned to the GC.
     protected abstract DeletePolicy DeleteCheck();                                                  // May this card's image be deleted?
-    protected abstract byte[]   Select(byte[] baAid);                                               // build the FCI's A5 TLV.
-    protected abstract byte[]   Dispatch(byte[] baApdu);                                            // Process the incoming APDU
+    protected abstract byte[]   Select(byte[] baAid) throws VCardIntegrityException;                // build the FCI's A5 TLV.
+    protected abstract byte[]   Dispatch(byte[] baApdu) throws VCardIntegrityException;             // Process the incoming APDU
 
 
     // =================================================================================================
@@ -577,7 +606,7 @@ public abstract class VCard {
 
     public static byte[] Response(byte[] baData, short sSW) {                                       // Helper for data + response construction
         byte[] baResponse = new byte[baData.length + 2];
-        System.arraycopy(baData, 0, baResponse, 0, baData.length);
+        arraycopy(baData, 0, baResponse, 0, baData.length);
         baResponse[baData.length] = (byte)(sSW >> 8);
         baResponse[baData.length + 1] = (byte)(sSW);
         return baResponse;
@@ -643,9 +672,9 @@ public abstract class VCard {
 
 
 
-    public void   TitleSet(String szTitle) { baTitle = java.util.Arrays.copyOf(szTitle.getBytes(), baTitle.length);   }  // Accessors for strings stored as fixed size byte arrays.
+    public void   TitleSet(String szTitle) { baTitle = Arrays.copyOf(szTitle.getBytes(), baTitle.length);   }  // Accessors for strings stored as fixed size byte arrays.
     public String TitleGet()               { return new String(baTitle, StandardCharsets.UTF_8).trim();               }
-    public void   NameSet(String szName)   { baName = java.util.Arrays.copyOf(szName.getBytes(), baName.length);      }
+    public void   NameSet(String szName)   { baName = Arrays.copyOf(szName.getBytes(), baName.length);      }
     public String NameGet()                { return new String(baName, StandardCharsets.UTF_8).trim();                }
 
 
@@ -693,7 +722,7 @@ public abstract class VCard {
             cipher.updateAAD(szAlias.getBytes(StandardCharsets.UTF_8));                             // the file must belong to this card and shadow
             baBuffer = cipher.doFinal(baBuffer, iGcmIvSize, baBuffer.length - iGcmIvSize);          // decrypted image; a bad tag throws
         }
-        catch (java.security.GeneralSecurityException | java.security.ProviderException e) {
+        catch (GeneralSecurityException | ProviderException e) {
             Log.d(TAG, "FileReadEncryptedBuffer: Decrypt failed: " + e.getMessage());
             return null;
         }
@@ -719,7 +748,7 @@ public abstract class VCard {
     //      to its card and shadow.
     //      File = IV(12) : ciphertext : tag(16)
     // ===============================================
-    private static void FileWriteEncryptedBuffer(Nvm cardNvm, short AorB, ByteBuffer buffer)  throws VCard.VirtualCardException, Exception {
+    private static void FileWriteEncryptedBuffer(Nvm cardNvm, short AorB, ByteBuffer buffer)  throws VirtualCardException, Exception {
         String      szFilename;
         SecretKey   key;
 
@@ -747,7 +776,7 @@ public abstract class VCard {
             arraycopy(baIv,     0, baFile, 0,           baIv.length);
             arraycopy(baCipher, 0, baFile, baIv.length, baCipher.length);
         }
-        catch (java.security.GeneralSecurityException | java.security.ProviderException e) {
+        catch (GeneralSecurityException | ProviderException e) {
             Log.d(TAG, "FileWriteEncryptedBuffer: Encrypt failed: " + e.getMessage());
             throw new VirtualCardException("VCard: image encryption failed");
         }
@@ -799,7 +828,7 @@ public abstract class VCard {
 
 
     protected static void Scrub(byte[] ba) {                                                        // overwrite a buffer, null safe
-        if (ba != null) { java.util.Arrays.fill(ba, (byte)0); }
+        if (ba != null) { Arrays.fill(ba, (byte)0); }
     }
 
     protected static SecretKey Destroy(SecretKey key) {                                             // destroy a key if the provider allows it
@@ -817,13 +846,13 @@ public abstract class VCard {
             case 24:    baFullSizeKey = baKeyMaterial;
                 break;
             case 16:    baFullSizeKey = new byte[24];
-                System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 0, 16);
-                System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 16, 8);
+                arraycopy(baKeyMaterial, 0, baFullSizeKey, 0, 16);
+                arraycopy(baKeyMaterial, 0, baFullSizeKey, 16, 8);
                 break;
             case 8:     baFullSizeKey = new byte[24];
-                System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 0, 8);
-                System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 8, 8);
-                System.arraycopy(baKeyMaterial, 0, baFullSizeKey, 16, 8);
+                arraycopy(baKeyMaterial, 0, baFullSizeKey, 0, 8);
+                arraycopy(baKeyMaterial, 0, baFullSizeKey, 8, 8);
+                arraycopy(baKeyMaterial, 0, baFullSizeKey, 16, 8);
                 break;
             default:    return null;
         }
@@ -858,7 +887,7 @@ public abstract class VCard {
         baTlv[iOffset++] = bTag;                                                                    //      insert T
         if (baV.length > 127) { baTlv[iOffset++] = (byte)0x81; }                                    //      insert L
         baTlv[iOffset++] = (byte)baV.length;                                                        //
-        System.arraycopy(baV, 0, baTlv, iOffset, baV.length);                                       //      insert V
+        arraycopy(baV, 0, baTlv, iOffset, baV.length);                                       //      insert V
         return baTlv;                                                                               // return. job done.
     }
 
@@ -872,7 +901,7 @@ public abstract class VCard {
         byte[] baA5contents = new byte[iLen];                                                       //      create that much  space
         int iOffset = 0;                                                                            //
         for (byte[] baTt : tagList) {                                                               //      copy each tlv into this space
-            System.arraycopy(baTt, 0, baA5contents, iOffset, baTt.length);                          //
+            arraycopy(baTt, 0, baA5contents, iOffset, baTt.length);                          //
             iOffset += baTt.length;                                                                 //
         }                                                                                           //
         return baA5contents;                                                                        // return with a job done well!

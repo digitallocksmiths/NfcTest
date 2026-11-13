@@ -23,7 +23,6 @@
   "toolbar": {
     "execution": true,
     "searchReplace": true,
-    "quickFind": true,
     "bookmarks": false,
     "breakpoints": true
   }
