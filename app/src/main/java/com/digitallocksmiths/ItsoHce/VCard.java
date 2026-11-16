@@ -99,11 +99,14 @@ public abstract class VCard {
     // Stored and recovered from the image file vis the
     // serializer functions.
     private         int         iAge = 0;                               // age of this file ( monotonic counter or updates.)
-    public          byte[]      baShell;                                // will/must be 0x18 bytes (i.e. no MCRN)
-    public          byte[]      baName  = new byte[32];                 // space for the name of the card.
-    public          byte[]      baTitle = new byte[32];                 // space for the title of the card.
-    private static final int    iShellSize    = 24;                     // size of baShell in the image.
-    private final   int         iNvmSizeSuper = 92;                     // size of the above savable data.
+    protected       byte[]      baShell = new byte[24];                 //
+    protected       byte[]      baName  = new byte[32];                 // space for the name of the card.
+    protected       byte[]      baTitle = new byte[32];                 // space for the title of the card.
+    protected       byte[]      baUID   = new byte[8];                  // the true UID of the card
+    //protected       byte[]      _baAid   = new byte[32];                 // Our AID needed for FCI regeneration
+
+    // private static final int    iShellSize    = 24;                     // size of baShell in the image.
+    // private final   int         iNvmSizeSuper = 92;                     // size of the above savable data.
 
 
 
@@ -206,13 +209,10 @@ public abstract class VCard {
     // Card identity:
     //      A card is identified by its UID as a hex
     //      string.
-    //      Cards without a UID fall back to the ISRN.
     // ===============================================
-    protected byte[] UidGet() { return null; }                                                      // subclasses with a UID override this
-
     public String CardIdGet() {
-        byte[] baUid = UidGet();
-        return HexString(((baUid != null) && (baUid.length > 0)) ? baUid : shell.getIsrn());
+        //byte[] baUid = UidGet();
+        return HexString(baUID);
     }
 
     private static String HexString(byte[] ba) {
@@ -241,15 +241,16 @@ public abstract class VCard {
 
     private static VCard ImageLoad(Nvm cardNvm) {                                                   // null if neither shadow holds a valid image
         int[]      aiAge  = new int[2];
-        ByteBuffer buffer = ImageNewest(cardNvm, aiAge);
+        ByteBuffer buffer = ImageNewest(cardNvm, aiAge);                                            // buffer will have has the four byte age extracted already
         if (buffer != null) {
             try {
-                byte[] baShell = new byte[iShellSize];
-                buffer.get(baShell);                                                                // Read the image's Shell;
+                byte[] baShell = DeserializeByteArray(buffer);                                      // We need the Shell to know what version of VCard subclass to build.
                 VCard vc = Construct(baShell);                                                      //      the shell picks the sub-class
-                buffer.get(vc.baName);                                                              //                  Name;
-                buffer.get(vc.baTitle);                                                             //                  Title;
-                vc.ImageDeserialize(buffer);
+                vc.baShell = baShell;                                                               //      now fill in it's interesting stuff.
+                vc.baName  = DeserializeByteArray(buffer);                                          //                  Name;
+                vc.baTitle = DeserializeByteArray(buffer);                                          //                  Title;
+                vc.baUID = DeserializeByteArray(buffer);                                            //                  baUID;
+                vc.ImageDeserialize(buffer);                                                        //                  CM image data
                 vc.nvm   = cardNvm;
                 vc.iAgeA = aiAge[0];
                 vc.iAgeB = aiAge[1];
@@ -273,6 +274,7 @@ public abstract class VCard {
         return (aiAge[0] > aiAge[1]) ? bufferA : bufferB;
     }
 
+
     // ===============================================
     // ImageSave:
     //      serialize the current image,
@@ -281,11 +283,18 @@ public abstract class VCard {
     // ===============================================
     public void ImageSave() throws VirtualCardException,  VirtualCardException, Exception {
         if (nvm == null) { nvm = new Nvm(szImageRoot + CardIdGet()); }                              // first save: the card's directory is named by its UID
-        ByteBuffer buffer = ByteBuffer.allocate(iNvmSizeSuper + ImageGetSize() + 4);        // accumulator for the saved image  super+sub+crc
+        int iImageSize = 4 +                                                                        // iAge
+                         SerializeOverhead + baShell.length +                                       // baShell
+                         SerializeOverhead + baName.length +                                        // baName
+                         SerializeOverhead + baTitle.length +                                       // baTitle
+                         SerializeOverhead + baUID.length +                                         // baUID
+                         ImageGetSize();                                                            // CM specific image size
+        ByteBuffer buffer = ByteBuffer.allocate(iImageSize);                                        // accumulator for the saved image  super+sub+crc
         buffer.putInt(++iAge);                                                                      // Add super's elements first.  iAge +
-        buffer.put(baShell);                                                                        //                              baShell.
-        buffer.put(baName);                                                                         //                              baName.
-        buffer.put(baTitle);                                                                        //                              baTitle.
+        SerializeByteArray(buffer, baShell);                                                        //                              baShell.
+        SerializeByteArray(buffer,baName);                                                          //                              baName.
+        SerializeByteArray(buffer,baTitle);                                                         //                              baTitle.
+        SerializeByteArray(buffer, baUID);                                                          //                              baUID.
         ImageSerialize(buffer);                                                                     // next let the subclass serialize its image
         if (iAgeA > iAgeB) { iAgeB = iAge; FileWriteEncryptedBuffer(nvm, Shadow.B, buffer); }       // helper for encrypting and saving the image
         else               { iAgeA = iAge; FileWriteEncryptedBuffer(nvm, Shadow.A, buffer); }
@@ -319,6 +328,7 @@ public abstract class VCard {
             VCard vc = Construct(DecodeJsonByteArray(jsonCardImage, "baShell"));                    // Create the appropriate sub-class
             vc.NameSet(jsonCardImage.getString("szName"));
             vc.TitleSet(jsonCardImage.getString("szTitle"));
+            vc.baUID = DecodeJsonByteArray(jsonCardImage, "baUID");
             vc.JsonParse(jsonCardImage);                                                            // let it parse itself
 
             vc.nvm = new Nvm(szImageRoot + vc.CardIdGet());                                         // parsing went well so this UID's directory
@@ -347,6 +357,7 @@ public abstract class VCard {
             EncodeJsonByteArray(jsonCardImage, "baShell", baShell);
             jsonCardImage.put ("szName", NameGet());
             jsonCardImage.put ("szTitle", TitleGet());
+            EncodeJsonByteArray(jsonCardImage, "baUid", baUID);
             JsonExport(jsonCardImage);
         } catch (JSONException e) {
             throw new VirtualCardException("Error exporting Json: " + szJsonFilename);
@@ -359,7 +370,6 @@ public abstract class VCard {
             FileWriter writer = new FileWriter(file);
             writer.write(szCardImage);
             writer.close();
-            //szSavedAsFilename = file.getName();
         } catch (IOException e) {
             throw new VirtualCardException("Error writing file: " + szJsonFilename);
         }
@@ -395,11 +405,9 @@ public abstract class VCard {
         ByteBuffer buffer = ImageNewest(new Nvm(szImageRoot + szCardId), new int[2]);
         if (buffer == null) { return null; }
         try {
-            byte[] baName  = new byte[32];
-            byte[] baTitle = new byte[32];
-            buffer.position(buffer.position() + iShellSize);                                        // skip the shell
-            buffer.get(baName);
-            buffer.get(baTitle);
+            byte[] baShell = DeserializeByteArray(buffer);
+            byte[] baName  = DeserializeByteArray(buffer);
+            byte[] baTitle = DeserializeByteArray(buffer);
             return new CardInfo(szCardId, new String(baName,  StandardCharsets.UTF_8).trim(),
                                           new String(baTitle, StandardCharsets.UTF_8).trim());
         }
@@ -673,9 +681,9 @@ public abstract class VCard {
 
 
     public void   TitleSet(String szTitle) { baTitle = Arrays.copyOf(szTitle.getBytes(), baTitle.length);   }  // Accessors for strings stored as fixed size byte arrays.
-    public String TitleGet()               { return new String(baTitle, StandardCharsets.UTF_8).trim();               }
+    public String TitleGet()               { return new String(baTitle, StandardCharsets.UTF_8).trim();     }
     public void   NameSet(String szName)   { baName = Arrays.copyOf(szName.getBytes(), baName.length);      }
-    public String NameGet()                { return new String(baName, StandardCharsets.UTF_8).trim();                }
+    public String NameGet()                { return new String(baName, StandardCharsets.UTF_8).trim();      }
 
 
     // ===============================================
@@ -727,13 +735,7 @@ public abstract class VCard {
             return null;
         }
 
-        if (ChecksumVerify(baBuffer)) {
-            return ByteBuffer.wrap(baBuffer);
-        }
-        else {
-            Log.d(TAG, "FileReadEncryptedBuffer: Checksum failed");
-            return null;
-        }
+        return ByteBuffer.wrap(baBuffer);
     }
 
     // ===============================================
@@ -763,8 +765,6 @@ public abstract class VCard {
         key = KeyGet(szAlias, true);                                                                // this card's key for this shadow, made on first save
 
         byte[] baBlob = buffer.array();                                                             // construction is complete
-        buffer.put(ChecksumCalculate(baBlob));                                                      // Add the checksum
-
         byte[] baFile;
         try {
             Cipher cipher = Cipher.getInstance(szImageCipher);
@@ -931,6 +931,7 @@ public abstract class VCard {
         arraycopy(baTlvA5, 0, baFci, iOffset, baTlvA5.length);                                      //         A5: T, L, & V
         return baFci;
     }
+
 
 
 

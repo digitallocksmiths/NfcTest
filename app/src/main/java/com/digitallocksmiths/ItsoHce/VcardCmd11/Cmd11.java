@@ -1,14 +1,18 @@
 package com.digitallocksmiths.ItsoHce.VcardCmd11;
 
-// ToDo: Consider this strategy....
-//       Select: Copy NVM sectors to RAM.
-//       Process: Work directly on RAM copies.
-//       EndSession: If verified, copy RAM to NVM.
-//       Combine sectors and MMMT is a mega structure.
-//       Keep version A/B encrypted with Keys A/B
-//       Key changes on every save.
-//
-
+// ToDo:    1:  Application Asymmetric key pair & API call to get public.
+//          2:  Build in Public key of the management authority.
+//          3:  Import JSON to take extended card image.
+//          3a:     Include an optional graphic-image for use in GUI card select
+//          3b:     Encrypted card Image using the Application's asymmetric key.
+//          3c:     Signed card Image using the management authority's asymmetric key.
+//          4:  Export JSON card image.
+//          4a:     Clear text if keys are excluded.
+//          4b:     full image encrypted for the management authority and signed by the Application's private key.
+//          5:  API extension
+//          5a:     Get IPEs, VRGs and LOGs for local GUI rendering.
+//          5b:     Get card graphic-image for local GUI rendering.
+//          5c:     Delete message, (signed by management authority.) to remove images.
 
 import android.util.Log;
 
@@ -58,18 +62,15 @@ public class Cmd11 extends VCard {
 
     // ==========================================================================
     // NV variables
-    //      this is the stuff we preserve. In a card it would be in NVM
-
-    // ToDo: Shouldn't AID be in the superclass?  thionk about it. it is defined by the CM's perso so not fixed size
-    private byte[] baAid;                                                                           // Our AID needed for FCI regeneration
+    //      This is the stuff we preserve. In a card it would be in NVM
+    //      Originally delivered via Import JSON. Thereafter Load/SaveImage.
+    //
 
     private byte[] mAuthDesKeyA;                                                                    // Authentication key, sets up the session key
     private byte[] mAuthDesKeyB;                                                                    // KSC3 uses a second Auth key. This is it.
     private byte[] mAuthPseudoKeyA;                                                                 // Same again but for the pseudo UID/Shell
     private byte[] mAuthPseudoKeyB;                                                                 //
-    //private byte[] baShell;
     private byte[] baPseudoShell;                                                                   // Contents of the pseudo shell (or null/empty for static uid)
-    private byte[] baUID;                                                                           // the true UID of the card
     private byte[] baPseudoUID;                                                                     // the perso assigned UID for pseudo shell authentication
     private byte[] baCapabillities;                                                                 // what command set is supported. (Only 00 is defined in V2.1.5)
     private byte[] baAuthKasParams;                                                                 // Was KAS values are used in Begin and ExtAuth.
@@ -134,19 +135,8 @@ public class Cmd11 extends VCard {
             Log.e(TAG, "Cmd11: Crypto trouble ", e);
             throw new VCard.VirtualCardException("Crypto Algorithm missing");
         }
-
-            // ToDo: Do we need to allocate the space.
-        // Just need to ensure JSON parser fills the correct size.
-        // also safe disposal of replaced data structures.
     }                                                                                               // Exit with all space allocated, to be populated later.
 
-
-    // ========================================
-    // UidGet()
-    //    The card's UID identifies it in the card store.
-    // ========================================
-    @Override
-    protected byte[] UidGet() { return baUID; }
 
     // ========================================
     // ImageGetSize()
@@ -154,16 +144,13 @@ public class Cmd11 extends VCard {
     // ========================================
     protected int   ImageGetSize() {                                                                // subclasses indicate their own storage volume requirements
         Log.d(TAG, "ImageGetSize");
-        // ToDo: Sizeof the image here.
         return  SerializeOverhead + baCSS.length +
                 4   /* sizeof(iTsn) */  +
-                SerializeOverhead + baAid.length +
                 SerializeOverhead + mAuthDesKeyA.length +
                 SerializeOverhead + mAuthDesKeyB.length +
                 SerializeOverhead + mAuthPseudoKeyA.length +
                 SerializeOverhead + mAuthPseudoKeyB.length +
                 SerializeOverhead + baPseudoShell.length +
-                SerializeOverhead + baUID.length +
                 SerializeOverhead + baPseudoUID.length +
                 SerializeOverhead + baCapabillities.length +
                 SerializeOverhead + baAuthKasParams.length +
@@ -183,13 +170,13 @@ public class Cmd11 extends VCard {
         try {
             baCSS              = DeserializeByteArray(buffer);
             iTsn               = buffer.getInt();
-            baAid              = DeserializeByteArray(buffer);
+            //baAid              = DeserializeByteArray(buffer);
             mAuthDesKeyA       = DeserializeByteArray(buffer);
             mAuthDesKeyB       = DeserializeByteArray(buffer);
             mAuthPseudoKeyA    = DeserializeByteArray(buffer);
             mAuthPseudoKeyB    = DeserializeByteArray(buffer);
             baPseudoShell      = DeserializeByteArray(buffer);
-            baUID              = DeserializeByteArray(buffer);
+            //baUID              = DeserializeByteArray(buffer);
             baPseudoUID        = DeserializeByteArray(buffer);
             baCapabillities    = DeserializeByteArray(buffer);
             baAuthKasParams    = DeserializeByteArray(buffer);
@@ -227,13 +214,11 @@ public class Cmd11 extends VCard {
         Log.d(TAG, "ImageSerialize");
         VCard.SerializeByteArray(buffer, baCSS);
         buffer.putInt(iTsn);
-        SerializeByteArray(buffer, baAid);
         SerializeByteArray(buffer, mAuthDesKeyA);
         SerializeByteArray(buffer, mAuthDesKeyB);
         SerializeByteArray(buffer, mAuthPseudoKeyA);
         SerializeByteArray(buffer, mAuthPseudoKeyB);
         SerializeByteArray(buffer, baPseudoShell);
-        SerializeByteArray(buffer, baUID);
         SerializeByteArray(buffer, baPseudoUID);
         SerializeByteArray(buffer, baCapabillities);
         SerializeByteArray(buffer, baAuthKasParams);
@@ -256,13 +241,11 @@ public class Cmd11 extends VCard {
         iTsn    = 0;                                                                                // new image so start the transaction counter form zero
         Arrays.fill(baCSS, (byte)0);                                                                // And clear the CSS
 
-        baAid           = DecodeJsonByteArray(jsonCardImage, "baAid");
         mAuthDesKeyA    = DecodeJsonByteArray(jsonCardImage, "mAuthDesKeyA");
         mAuthDesKeyB    = DecodeJsonByteArray(jsonCardImage, "mAuthDesKeyB");
         mAuthPseudoKeyA = DecodeJsonByteArray(jsonCardImage, "mAuthPseudoKeyA");
         mAuthPseudoKeyB = DecodeJsonByteArray(jsonCardImage, "mAuthPseudoKeyB");
         baPseudoShell   = DecodeJsonByteArray(jsonCardImage, "baPseudoShell");
-        baUID           = DecodeJsonByteArray(jsonCardImage, "baUID");
         baPseudoUID     = DecodeJsonByteArray(jsonCardImage, "baPseudoUID");
         baCapabillities = DecodeJsonByteArray(jsonCardImage, "baCapabillities");
         baAuthKasParams = DecodeJsonByteArray(jsonCardImage, "baAuthKasParams");
@@ -304,13 +287,11 @@ public class Cmd11 extends VCard {
     protected void  JsonExport(JSONObject jsonCardImage) throws JSONException {                     // Add data to the JSON object.
         Log.d(TAG, "JsonExport");
 
-        EncodeJsonByteArray(jsonCardImage, "baAid",           baAid);
         EncodeJsonByteArray(jsonCardImage, "mAuthDesKeyA",    mAuthDesKeyA);
         EncodeJsonByteArray(jsonCardImage, "mAuthDesKeyB",    mAuthDesKeyB);
         EncodeJsonByteArray(jsonCardImage, "mAuthPseudoKeyA", mAuthPseudoKeyA);
         EncodeJsonByteArray(jsonCardImage, "mAuthPseudoKeyB", mAuthPseudoKeyB);
         EncodeJsonByteArray(jsonCardImage, "baPseudoShell",   baPseudoShell);
-        EncodeJsonByteArray(jsonCardImage, "baUID",          baUID );
         EncodeJsonByteArray(jsonCardImage, "baPseudoUID",     baPseudoUID);
         EncodeJsonByteArray(jsonCardImage, "baCapabillities", baCapabillities);
         EncodeJsonByteArray(jsonCardImage, "baAuthKasParams", baAuthKasParams);
@@ -433,13 +414,13 @@ public class Cmd11 extends VCard {
 
     private byte[] FciBuildStatic() {                                                               // *** Static UID FCI
         ArrayList<byte[]> tagList = new ArrayList<>();
-        tagList.add(TlvBuild(bTagShell,        baShell));
+        tagList.add(TlvBuild(bTagShell, baShell));
         tagList.add(TlvBuild(bTagCapabilities, baCapabillities));
         tagList.add(TlvBuild(bTagDirectory,    directory.Get()));
         tagList.add(TlvBuild(bTagOidList,      ConstructOids()));
         tagList.add(TlvBuild(bTagCss,          baCSS));
         tagList.add(TlvBuild(bTagChallenge,    ConstructChallenge(DesKeyA)));
-        tagList.add(TlvBuild(bTagStaticUid,    baUID));                                             // non standard...
+        tagList.add(TlvBuild(bTagStaticUid, baUID));                                             // non standard...
         tagList.add(TlvBuild(bTagAuth,         baAuthKasParams));
         return TlvBuild((byte)0xA5, tagList);
     }
@@ -457,11 +438,11 @@ public class Cmd11 extends VCard {
 
     private byte[] FciBuildReselect() {                                                             // *** Reselection FCI
         ArrayList<byte[]> tagList = new ArrayList<>();
-        tagList.add(TlvBuild(bTagShell,        baShell));
+        tagList.add(TlvBuild(bTagShell, baShell));
         tagList.add(TlvBuild(bTagDirectory,    directory.Get()));
         tagList.add(TlvBuild(bTagOidList,      ConstructOids()));
         tagList.add(TlvBuild(bTagChallenge,    ConstructChallenge(DesKeyA)));
-        tagList.add(TlvBuild(bTagStaticUid,    baUID));
+        tagList.add(TlvBuild(bTagStaticUid, baUID));
         tagList.add(TlvBuild(bTagAuth,         baAuthKasParams));
         return TlvBuild((byte)0xA5, tagList);
     }

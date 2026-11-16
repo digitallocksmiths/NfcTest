@@ -2,12 +2,19 @@ package com.digitallocksmiths.ItsoHce;
 
 import static java.lang.System.arraycopy;
 
+import android.content.res.XmlResourceParser;
 import android.nfc.cardemulation.HostApduService;
 import android.os.Bundle;
 import android.util.Log;
 
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserException;
+
 import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 
 public class MyHostApduService extends HostApduService {
@@ -114,4 +121,7 @@ public class MyHostApduService extends HostApduService {
         }
         return sb.toString();
     }
+
+
+
 }

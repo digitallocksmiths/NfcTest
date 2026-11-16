@@ -1,8 +1,12 @@
 package com.digitallocksmiths.ItsoHce;
 
 import android.content.ComponentName;
+import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
+import android.content.res.XmlResourceParser;
 import android.nfc.NfcAdapter;
 import android.nfc.cardemulation.CardEmulation;
+import android.nfc.cardemulation.HostApduService;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.method.ScrollingMovementMethod;
@@ -24,8 +28,13 @@ import com.github.angads25.filepicker.model.DialogConfigs;
 import com.github.angads25.filepicker.model.DialogProperties;
 import com.github.angads25.filepicker.view.FilePickerDialog;
 
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserException;
+
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 public class MainActivity extends AppCompatActivity {
@@ -60,13 +69,19 @@ public class MainActivity extends AppCompatActivity {
         tv.setMovementMethod(ScrollingMovementMethod.getInstance());
         tv.setMovementMethod(new ScrollingMovementMethod());
 
+        List<String> aids = GetDeclaredAids();
+
         boolean bRestored = savedInstanceState != null && savedInstanceState.containsKey(LOG_TEXT_KEY);
         if (bRestored) {                                                                                // recreated (e.g. rotation): put the log back
             tv.setText(savedInstanceState.getCharSequence(LOG_TEXT_KEY));
             tv.post(() -> Print(""));                                                                   // scroll to the end once laid out
         } else {
             tv.append("NFC HCE Service is active.\n");
-            tv.append("AID: A0000002164954534F2D31\n");
+            tv.append("AID: ");
+            if (aids.isEmpty()) { tv.append("none"); }
+            else                { tv.append(String.join(", ", aids));}
+            tv.append("\n");
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {                      // Android 15+: the Wallet app's observe mode
                 tv.append("Note: background taps are blocked by the Wallet app "                      //      silences HCE unless we are in the foreground
                         + "(e.g. Google Wallet). Keep this app open when tapping.\n");
@@ -90,7 +105,25 @@ public class MainActivity extends AppCompatActivity {
         else { tvTitle.setText(getString(R.string.title_card, vcard.NameGet(), vcard.TitleGet())); }
     }
 
-    // =============================================================================================
+    private List<String> GetDeclaredAids() {
+        List<String> aids = new ArrayList<>();
+        try {
+            XmlResourceParser p = getResources().getXml(R.xml.nfc_hce_service);
+            for (int ev = p.getEventType(); ev != XmlPullParser.END_DOCUMENT; ev = p.next()) {
+                if (ev == XmlPullParser.START_TAG &&
+                        ("aid-filter".equals(p.getName()) || "aid-prefix-filter".equals(p.getName()))) {
+                    String aid = p.getAttributeValue("http://schemas.android.com/apk/res/android", "name");
+                    if (aid != null) aids.add(aid.toUpperCase());
+                }
+            }
+        } catch ( XmlPullParserException | IOException e) {
+            Log.d(TAG, "AID lookup failed: " + e.getMessage());
+        }
+        return aids;
+    }
+
+
+        // =============================================================================================
     // AID routing
     //      While we are in the foreground our HCE service is the preferred
     //      handler for its AIDs, so another app registering the ITSO AID
