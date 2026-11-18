@@ -27,7 +27,7 @@
         </activity>
 
         <service
-            android:name=".MyHostApduService"
+            android:name=".CardEmulationService"
             android:exported="true"
             android:permission="android.permission.BIND_NFC_SERVICE">
             <intent-filter>

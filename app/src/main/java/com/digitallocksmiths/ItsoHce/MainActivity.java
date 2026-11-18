@@ -1,12 +1,9 @@
 package com.digitallocksmiths.ItsoHce;
 
 import android.content.ComponentName;
-import android.content.pm.PackageManager;
-import android.content.pm.ServiceInfo;
 import android.content.res.XmlResourceParser;
 import android.nfc.NfcAdapter;
 import android.nfc.cardemulation.CardEmulation;
-import android.nfc.cardemulation.HostApduService;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.method.ScrollingMovementMethod;
@@ -139,7 +136,7 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         CardEmulation cardEmulation = GetCardEmulation();
         if (cardEmulation != null) {
-            boolean f = cardEmulation.setPreferredService(this, new ComponentName(this, MyHostApduService.class));
+            boolean f = cardEmulation.setPreferredService(this, new ComponentName(this, CardEmulationService.class));
             Log.d(TAG, "setPreferredService: " + f);
         }
     }

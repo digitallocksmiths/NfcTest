@@ -2,6 +2,7 @@ package com.digitallocksmiths.ItsoHce.VcardCmd2;
 
 import android.util.Log;
 
+import com.digitallocksmiths.ItsoHce.Apdu;
 import com.digitallocksmiths.ItsoHce.VCard;
 
 import org.json.JSONException;
@@ -108,12 +109,12 @@ public class Cmd2 extends VCard {
     // ========================================
     // Dispatch()
     //      process the APDU
+    //      return via exception
     // ========================================
-    protected byte[] Dispatch(byte[] baApdu) {                                                         // Card dispatch
+    protected void Dispatch(Apdu apdu)   throws Apdu.ExitException, VCardIntegrityException {                                                         // Card dispatch
         Log.d(TAG, "Dispatch");
         // ToDo: Process APDUs here.
-        return Response(SW.INS_NOT_SUPPORTED);
+        ApduException.Throw(Apdu.SW.INS_NOT_SUPPORTED);
     }
-
 
 }

@@ -1,23 +1,13 @@
 package com.digitallocksmiths.ItsoHce;
 
-import static java.lang.System.arraycopy;
-
-import android.content.res.XmlResourceParser;
 import android.nfc.cardemulation.HostApduService;
 import android.os.Bundle;
 import android.util.Log;
 
-import org.xmlpull.v1.XmlPullParser;
-import org.xmlpull.v1.XmlPullParserException;
-
 import java.io.File;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
 import java.util.Objects;
 
-public class MyHostApduService extends HostApduService {
+public class CardEmulationService extends HostApduService {
     private static final String TAG = "MyHostApduService";
 
 
@@ -27,10 +17,17 @@ public class MyHostApduService extends HostApduService {
     // =============================================================================================
     // File helpers
     //
-    private String GetAppPrivateDirectory() { return getFilesDir().getPath(); }                                         // this is where secret files are stored.
-    private String GetAppPublicDirectory()  { return Objects.requireNonNull(getExternalFilesDir(null)).getPath(); }     // this is where the json profiles are stored.
-    private String GetImageDirectory()      { return GetAppPrivateDirectory() + File.separator + "Image"; }             // this is where the images are stored.
+    private String GetAppPrivateDirectory() {
+        return getFilesDir().getPath();
+    }                                         // this is where secret files are stored.
 
+    private String GetAppPublicDirectory() {
+        return Objects.requireNonNull(getExternalFilesDir(null)).getPath();
+    }     // this is where the json profiles are stored.
+
+    private String GetImageDirectory() {
+        return GetAppPrivateDirectory() + File.separator + "Image";
+    }             // this is where the images are stored.
 
 
     @Override
@@ -59,23 +56,27 @@ public class MyHostApduService extends HostApduService {
         Log.d(TAG, "Service destroyed");
     }
 
+
+
     @Override
-    public byte[] processCommandApdu(byte[] commandApdu, Bundle extras)  {                           // process command
-        if (commandApdu == null) {
-            return VCard.Response(VCard.SW.CLA_NOT_SUPPORTED);
+    public byte[] processCommandApdu(byte[] commandApdu, Bundle extras) {                           // process command
+
+        Log.d(TAG, "Received APDU: " + VCard.bytesToHex(commandApdu));
+        byte[] baResponse;// = null;
+
+        Apdu apdu = new Apdu(commandApdu);
+
+        if (apdu.apduCase == Apdu.ApduCase.Malformed) {
+            return Apdu.BuildResponse(Apdu.SW.CLA_NOT_SUPPORTED);
         }
 
-        String hexCommand = bytesToHex(commandApdu);
-        Log.d(TAG, "Received APDU: " + hexCommand);
 
-        // Check if it's a SELECT AID command
-        // The first 4 bytes 00 A4 04 00 are standard for SELECT AID
-        if (commandApdu.length >= 4       &&
-            commandApdu[0] == (byte) 0x00 &&
-            commandApdu[1] == (byte) 0xA4 &&
-            commandApdu[2] == (byte) 0x04 &&
-            commandApdu[3] == (byte) 0x00)    {
-                Log.d(TAG, "SELECT AID detected");
+        if (apdu.Cla ==  0x00 &&                                                                    // Check if it's a SELECT AID command
+            apdu.Ins ==  0xA4 &&
+            apdu.P1  ==  0x04 &&
+            apdu.P2  ==  0x00 &&
+            apdu.Lc >  0) {
+            Log.d(TAG, "SELECT AID detected");
                 try {
                     if (vcard != null) {                                                            // a (re)select is a warm reset:
                         vcard.Dispose();                                                            //      scrub the current image
@@ -83,9 +84,8 @@ public class MyHostApduService extends HostApduService {
                     }
                     vcard = VCard.FactoryImageLoad(VCard.ActiveCardGet());                          //      reload the active card's image
                     vcard.Reset();                                                                  //      and clear the 'RAM' variables
-                    byte[] baAid    = Arrays.copyOfRange(commandApdu, 5, 5 + commandApdu[4]);       // Get the AID we answered to
-                    byte[] baFci    = vcard.Select(baAid);                                          // Do the selection and get the FCI in response.
-                    return VCard.Response(baFci, VCard.SW.NO_ERROR);                                // return it with the happy message.
+                    byte[] baFci    = vcard.Select(apdu.baRxData);                                  // Do the selection and get the FCI in response.
+                    baResponse =  Apdu.BuildResponse(baFci, Apdu.SW.NO_ERROR);                          // return it with the happy message.
                 }
                 catch (VCard.VirtualCardException e) {
                     Log.d(TAG, "SELECT failed: " + e.getMessage());
@@ -93,35 +93,31 @@ public class MyHostApduService extends HostApduService {
                         vcard.Dispose();
                         vcard = null;
                     }
-                    return VCard.Response(VCard.SW.APPLET_SELECT_FAILED);
+                    baResponse =  Apdu.BuildResponse(Apdu.SW.APPLET_SELECT_FAILED);
                 } catch (VCard.VCardIntegrityException e) {
                     throw new RuntimeException(e);
                 }
         }
+        else if (vcard == null) {
+            baResponse =  Apdu.BuildResponse(Apdu.SW.CLA_NOT_SUPPORTED);
+        }
+        else {
+            try {
+                vcard.Dispatch(apdu);                                                               // Dispatch and expect return via ApduExitException
+                baResponse =  Apdu.BuildResponse(Apdu.SW.UNKNOWN);                                       // This should not happen.
+            }
+            catch (Apdu.ExitException e) {
+                baResponse = e.GetResponse();
+            }
+            catch (VCard.VCardIntegrityException e) {
+                throw new RuntimeException(e);
+            }
 
-        if (vcard == null) {
-            return VCard.Response(VCard.SW.CLA_NOT_SUPPORTED);
         }
 
-        try {
-            // ToDo: Add sanity check here to ensure APDU is well formed one of 4 classes
-            return vcard.Dispatch(commandApdu);
-        } catch (VCard.VCardIntegrityException e) {
-            throw new RuntimeException(e);
-        }
+        Log.d(TAG, "Response:      " + VCard.bytesToHex(baResponse));
+        return baResponse;
+
     }
-
-
-
-
-    private String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02X", b));
-        }
-        return sb.toString();
-    }
-
-
 
 }

@@ -7,6 +7,8 @@ import android.security.keystore.KeyProperties;
 import android.util.Base64;
 import android.util.Log;
 
+import androidx.annotation.NonNull;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
@@ -24,6 +26,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Scanner;
 
+import org.jetbrains.annotations.Contract;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -496,20 +499,19 @@ public abstract class VCard {
         ui.Deleted(szCardId);
     }
 
-    protected abstract int      ImageGetSize();                                                     // subclasses indicate their own storage volume requirements
-    protected abstract void     ImageDeserialize(ByteBuffer buffer)  throws VirtualCardException;   // subclasses populate their working variables here.
-    protected abstract void     ImageSerialize(ByteBuffer buffer);                                  // subclasses serialize their variables here.
+    protected abstract int      ImageGetSize();                                                         // subclasses indicate their own storage volume requirements
+    protected abstract void     ImageDeserialize(ByteBuffer buffer)  throws VirtualCardException;       // subclasses populate their working variables here.
+    protected abstract void     ImageSerialize(ByteBuffer buffer);                                      // subclasses serialize their variables here.
     protected abstract void     JsonParse(JSONObject jsonCardImage)  throws JSONException, VirtualCardException; // parse the JSON image into the CM Image
-    protected abstract void     JsonExport(JSONObject jsonCardImage) throws JSONException;          // Make a Json String of the CM Image
-    protected abstract void     Reset()                              throws VirtualCardException;   // Called on Reset.
-    protected abstract void     Dispose();                                                          // Overwrite secrets before the instance is abandoned to the GC.
-    protected abstract DeletePolicy DeleteCheck();                                                  // May this card's image be deleted?
-    protected abstract byte[]   Select(byte[] baAid) throws VCardIntegrityException;                // build the FCI's A5 TLV.
-    protected abstract byte[]   Dispatch(byte[] baApdu) throws VCardIntegrityException;             // Process the incoming APDU
+    protected abstract void     JsonExport(JSONObject jsonCardImage) throws JSONException;              // Make a Json String of the CM Image
+    protected abstract void     Reset()                              throws VirtualCardException;       // Called on Reset.
+    protected abstract void     Dispose();                                                              // Overwrite secrets before the instance is abandoned to the GC.
+    protected abstract DeletePolicy DeleteCheck();                                                      // May this card's image be deleted?
+    protected abstract byte[]   Select(byte[] baAid) throws VCardIntegrityException;                    // build the FCI's A5 TLV.
+    protected abstract void     Dispatch(Apdu apdu) throws Apdu.ExitException, VCardIntegrityException;  // Process the incoming APDU return via exception
 
 
-    // =================================================================================================
-// =============================================================================================
+ // =============================================================================================
 // Helper classes and static functions
 // Helper functions used by the subclasses.
 //
@@ -526,124 +528,14 @@ public abstract class VCard {
 
     // =============================================================================================
 
-    public static class ApduExitException extends Exception {                                // Response Exit StatusReportingException
-        private short   sExcuse;
-        private byte[]  baData;
-        public ApduExitException() { super(); }
 
-        public byte[] GetResponse() {
-            if (baData == null) { return Response(sExcuse);         }
-            else                { return Response(baData, sExcuse); }
-        }
-
-        public void Throw(byte[] baData, short sStatusWord) throws ApduExitException {
-            this.baData = baData;;                                                             // avoids a lot of new and dispose operations.
-            this.sExcuse = sStatusWord;
-            throw this;
-        }
-
-        public void Throw(short sStatusWord) throws ApduExitException {
-            this.baData = null;
-            this.sExcuse = sStatusWord;
-            throw this;
-        }
-
-    }
-
-    protected static final ApduExitException ApduException = new ApduExitException();
-
-
-
-
-
-
-
-
-
-    public static class SW {                                                                        // Status words
-        public static final short NO_ERROR                       = (short)0x9000;                   // No Error
-        public static final short BYTES_REMAINING_00             = (short)0x6100;                   // Response bytes remaining
-        public static final short WRONG_LENGTH                   = (short)0x6700;                   // Wrong length
-        public static final short SECURITY_STATUS_NOT_SATISFIED  = (short)0x6982;                   // Security condition not satisfied
-        public static final short FILE_INVALID                   = (short)0x6983;                   // File invalid
-        public static final short DATA_INVALID                   = (short)0x6984;                   // Data invalid
-        public static final short CONDITIONS_NOT_SATISFIED       = (short)0x6985;                   // Conditions of use not satisfied
-        public static final short COMMAND_NOT_ALLOWED            = (short)0x6986;                   // Command not allowed (no current EF)
-        public static final short APPLET_SELECT_FAILED           = (short)0x6999;                   // Applet selection failed
-        public static final short WRONG_DATA                     = (short)0x6A80;                   // Wrong data
-        public static final short FUNC_NOT_SUPPORTED             = (short)0x6A81;                   // Function not supported
-        public static final short FILE_NOT_FOUND                 = (short)0x6A82;                   // File not found
-        public static final short RECORD_NOT_FOUND               = (short)0x6A83;                   // Record not found
-        public static final short INCORRECT_P1P2                 = (short)0x6A86;                   // Incorrect parameters (P1,P2)
-        public static final short WRONG_P1P2                     = (short)0x6B00;                   // Incorrect parameters (P1,P2)
-        public static final short CORRECT_LENGTH_00              = (short)0x6C00;                   // Correct Expected Length (Le)
-        public static final short INS_NOT_SUPPORTED              = (short)0x6D00;                   // INS value not supported
-        public static final short CLA_NOT_SUPPORTED              = (short)0x6E00;                   // CLA value not supported
-        public static final short UNKNOWN                        = (short)0x6F00;                   // No precise diagnosis
-        public static final short FILE_FULL                      = (short)0x6A84;                   // Not enough memory space in the file
-        public static final short LOGICAL_CHANNEL_NOT_SUPPORTED  = (short)0x6881;                   // Card does not support the operation on the specified logical channel
-        public static final short SECURE_MESSAGING_NOT_SUPPORTED = (short)0x6882;                   // Card does not support secure messaging
-        public static final short WARNING_STATE_UNCHANGED        = (short)0x6200;                   // Warning, card state unchanged
-        public static final short LAST_COMMAND_EXPECTED          = (short)0x6883;                   // Last command in chain expected
-        public static final short COMMAND_CHAINING_NOT_SUPPORTED = (short)0x6884;                   // Command chaining not supported
-        public static final short AUTHENTICATION_FAILURE         = (short)0x6300;                   // (Not a JC standard name/value) Home brew.
-    }
-
-    public static class ISO7816 {                                                                  // ISO7816 constants
-        public static final int OFFSET_CLA    = 0;
-        public static final int OFFSET_INS    = 1;
-        public static final int OFFSET_P1     = 2;
-        public static final int OFFSET_P2     = 3;
-        public static final int OFFSET_LC     = 4;
-        public static final int OFFSET_CDATA  = 5;
-    }
-
-
+    protected static final Apdu.ExitException ApduException = new Apdu.ExitException();             // shared by all Dispatchers
 
     public static class Shadow {
         public static final short A                       = 1;
         public static final short B                       = 2;
     }
 
-    public static byte[] Response(short sSW) {                                                      // Helper for empty response construction
-        byte[] baResponse = new byte[2];
-        baResponse[0] = (byte)(sSW >> 8);
-        baResponse[1] = (byte)(sSW);
-        return baResponse;
-    }
-
-    public static byte[] Response(byte[] baData, short sSW) {                                       // Helper for data + response construction
-        byte[] baResponse = new byte[baData.length + 2];
-        arraycopy(baData, 0, baResponse, 0, baData.length);
-        baResponse[baData.length] = (byte)(sSW >> 8);
-        baResponse[baData.length + 1] = (byte)(sSW);
-        return baResponse;
-    }
-
-    private static byte[] ChecksumCalculate(byte[] baBlob) {
-        byte[] baChecksum = new byte[4];
-        baChecksum[0] = (byte)0xff;
-        baChecksum[1] = (byte)0x00;
-        baChecksum[2] = (byte)0xff;
-        baChecksum[3] = (byte)0x00;
-        for (int i = 0; i < baBlob.length -4 ; i++) {
-            baChecksum[0] += baBlob[i];
-            baChecksum[1] += baChecksum[0];
-            baChecksum[2] += baChecksum[1];
-            baChecksum[3] += baChecksum[2];
-        }
-        return baChecksum;
-    }
-
-    private static boolean ChecksumVerify(byte[] baBlob) {
-        byte[] baChecksum = ChecksumCalculate(baBlob);
-        for (int i = 0; i < 4; i++) {
-            if (baChecksum[i] != baBlob[baBlob.length - 4 + i]) {
-                return false;
-            }
-        }
-        return true;
-    }
 
     protected static byte[] DecodeStringToByteArray(String szString) {                              // Sz ==> ba
         return Base64.decode(szString, Base64.DEFAULT);
@@ -817,7 +709,7 @@ public abstract class VCard {
         return true;
     }
 
-    protected static boolean BytesMatch(byte[] baA, int iOffsetA, byte[] baB, int iOffsetB, int iLen) {
+   protected static boolean BytesMatch(byte[] baA, int iOffsetA, byte[] baB, int iOffsetB, int iLen) {
         if (baA.length < iOffsetA + iLen) {               return false; }
         if (baB.length < iOffsetB + iLen) {               return false; }
         for (int i = 0; i < iLen; i++) {
@@ -933,7 +825,17 @@ public abstract class VCard {
     }
 
 
+// =================================================================================================
+// Helper functions used by the subclasses and VCard users.
+//
 
-
+    protected static String bytesToHex(byte[] bytes) {
+        if (bytes == null) { return "<null>"; }
+        StringBuilder sb = new StringBuilder();
+        for (byte b : bytes) {
+            sb.append(String.format("%02X", b));
+        }
+        return sb.toString();
+    }
 
 }
