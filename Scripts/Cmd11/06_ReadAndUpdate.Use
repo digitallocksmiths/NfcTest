@@ -1,0 +1,225 @@
+// !TestName: ReadAndUpdate
+//
+//  1: Authenticate the Card with the ISAM
+//  2: Verify the directory.
+//  3: Reads Log and Ipe+Vrg #1 after authentication, So the reads
+//     should be part of the exchange SHA calculation.
+//  4: Create new Log and IPE+Vrg #2.
+//  5: Update the directory.
+//  6: Write them to the Card.
+//  7: Commit --- This test the seal calculation
+//  8: Reset the Card and verify the Directory and CSS are updated.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//                  Card to have an an IPE in E-slot 1 for the read tests.
+//                  Card to have E-slot 2 Empty for the new IPE.
+//
+
+@ReaderA.Reset.cold;
+@ReaderB.Reset.cold;
+
+@PrintLn(" ************ 1: Authenticate the Card with the ISAM *******************");
+@Include ("01_Auth.Use");                                       // Sets variables including 'Shell' & 'Directory'
+
+
+@Print("Authentication complete");
+
+u8  ShellE = Shell[18_d];
+var Tx;
+var Rx;
+
+@PrintLn(" ************ 2: Verify the directory. *********************************");
+
+Rx = @ReaderB.Apdu("WSAM Dir", 9040 0002 ((u8)(2 + Directory.Length)) ((u16)Directory.Length)  Directory);
+Rx = @ReaderB.Apdu("VERIFY_ITSO", 904E 0000 00 );
+@Assert(Rx[¬1..] == 9000, "Verify Directory");
+
+
+@PrintLn(" ************ 3: Reads Log and Ipe+Vrg #1 ******************************");
+
+var HashAcc = @Sha256.init;
+u8  IpeNo = 1;
+
+@PrintLn("============ Reading All Logs");
+
+Tx = 9016 0500 00;                                              // read all 5 log records
+Rx = @ReaderA.Apdu("Read  5 Log", Tx );
+HashAcc = @Sha256.Update(HashAcc, Tx);
+HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == 9000, "Read 5 Log OK");
+
+@PrintLn("============ Reading IPE 1");
+
+Tx = 9012 IpeNo 00 00 ;                                         // read IPE IpeNo
+Rx = @ReaderA.Apdu("Read  Ipe #" :: IpeNo , Tx );
+HashAcc = @Sha256.Update(HashAcc, Tx);
+HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == 9000, "Expecting success");
+
+
+@PrintLn("============ Reading VRG 1");
+@PrintLn("Only expecting #1 to be populated");
+
+
+Tx = 9014 IpeNo 00 00;                                          // read VRG IpeNo
+Rx = @ReaderA.Apdu("Read  Vrg #" :: IpeNo , Tx );
+HashAcc = @Sha256.Update(HashAcc, Tx);
+HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == 9000, "Expecting success");
+
+
+@PrintLn(" ************ 4: Create new Log and IPE+Vrg #2 *************************");
+
+IpeNo           = 2;
+
+var IpeEntry    = 440440A3CA;                                                                               // type 2 IPE
+var Vrg         = 23090000 @Itso.Dts 00000000000000000001000000000000000000000000000000 1088080000000000;
+var Ipe         = 1801FF1003600065 03E80F9F01F307D0 8F14000200000000 1088080000000000;
+
+var LogE_Orphan = 7F80000000;                                                                               // Orphan Entry for seal
+var LogEntry    = 8412344000 + (@Itso.Date + 10_d);                                                         // Normal Log
+var Log         = 1C0400FCC7A29E80009B0000CA000D5222000001CA000D522200000000FF000000000000;
+
+u8  IpeKas = 01;
+
+
+@PrintLn(" ============ Create VRG ");
+Tx = IpeEntry Vrg;
+Rx = @ReaderB.Apdu("WSAM VRG", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx = @ReaderB.Apdu("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 IpeKas 00);
+@Assert(Rx[¬1..] == 9000, "CREATE_IPE");
+var SectorPwdVrg = Rx[2..9];
+
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+var SignedVrg = Rx[5..¬2];
+
+@PrintLn(" ============ Create IPE ");
+Tx = IpeEntry Ipe;
+Rx = @ReaderB.Apdu("WSAM IPE", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx = @ReaderB.Apdu("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 IpeKas 00);
+@Assert(Rx[¬1..] == 9000, "Create IPE");
+var SectorPwdIpe = Rx[2..9];
+
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+var SignedIpe = Rx[5..¬2];
+
+
+@PrintLn(" ============ Create LOG ");
+Tx = LogE_Orphan Log;
+Rx = @ReaderB.Apdu("WSAM LOG", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx)) Tx);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx = @ReaderB.Apdu("CREATE_IPE", 9052 (ShellE-1) 00 01 IpeKas 00);
+@Assert(Rx[¬1..] == 9000, "Create IPE");
+var SectorPwdLog = Rx[2..9];
+
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+var SignedLog = Rx[5..¬2];
+
+
+@PrintLn(" ************ 5: Update the directory. *********************************");
+
+//var newDir = 0021 IpeEntry 0000000000 0000000000 0000000000 0000000000 0000000000 0000000000 LogEntry 000000000110FF00000254E8F12156C677B4;
+var _D1 = Directory[0..(2 + 5 *(IpeNo-1))-1];   // -1 'cos it's inclusive
+var _D2 = IpeEntry;
+var _D3 = Directory[(2 + 5 *IpeNo)..((2 + 5 *(ShellE-1))-1) ];   // -1 'cos it's inclusive
+var _D4 = LogEntry;
+var _D5 = Directory[(2 + 5 *(ShellE))..];
+var newDir = _D1 _D2 _D3 _D4 _D5;
+
+@Debug(Shell);
+@Debug(Directory);
+@Debug(ShellE);
+@Debug(_D1);
+@Debug(_D2);
+@Debug(_D3);
+@Debug(_D4);
+@Debug(_D5);
+@Debug(newDir);
+
+
+Rx = @ReaderB.Apdu("WSAM Directory", 9040 0002 ((u8)(2 + newDir.length)) ((u16)newDir.length)  newDir);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+Rx = @ReaderB.Apdu("WDIR", 9056 0000 01 01 00);
+@Assert(Rx[¬1..] == 9000, "WDIR");
+var SectorPwdDir = Rx[2..9];
+
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+var SignedDir = Rx[..¬2];
+
+
+@PrintLn(" ************ 6: Write them to the Card. *******************************");
+
+@PrintLn(" ============ CMD11 Update Ipe ");
+Tx      = 9018 IpeNo 00 ((u8)(SectorPwdIpe.length + SignedIpe.length)) SectorPwdIpe SignedIpe;
+Rx      = @ReaderA.Apdu("Update Ipe", Tx);
+HashAcc = @Sha256.Update(HashAcc, Tx);
+HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == 9000, "UpdateIpe");
+
+@PrintLn(" ============ CMD11 Update Ipe ");
+Tx      = 901A IpeNo 00 ((u8)(SectorPwdVrg.length + SignedVrg.length)) SectorPwdVrg SignedVrg;
+Rx      = @ReaderA.Apdu("Update Vrg", Tx);
+HashAcc = @Sha256.Update(HashAcc, Tx);
+HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == 9000, "UpdateVrg");
+
+
+@PrintLn(" ============ CMD11 Update Log ");
+Tx      = 901C 0000 ((u8)(SectorPwdLog.length + SignedLog.length)) SectorPwdLog SignedLog;
+Rx      = @ReaderA.Apdu("Update Log", Tx);
+HashAcc = @Sha256.Update(HashAcc, Tx);
+HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == 9000, "UpdateLog");
+
+@PrintLn(" ============ CMD11 Update Dir ");
+Tx      = 901E 0000 ((u8)(SectorPwdDir.length + SignedDir.length)) SectorPwdDir SignedDir;
+Rx      = @ReaderA.Apdu("Update Dir", Tx);
+HashAcc = @Sha256.Update(HashAcc, Tx);
+HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == 9000, "UpdateDir");
+
+
+@PrintLn(" ============ Commit Updates ");
+var Hash = @Sha256.Final(HashAcc);
+
+Rx      = @ReaderB.Apdu("WSAM", 9040 0002 ((u8)(2 + Hash.Length)) ((u16)Hash.Length) Hash);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx      = @ReaderB.Apdu("PIMO", 904A000004 00040020 00);
+@Assert(Rx[¬1..] == 9000, "PIMO");
+var Sig = Rx[..¬2];
+
+Rx      = @ReaderA.Apdu("End Session", 9020 0000 ((u8)Sig.length) Sig 00);
+@Assert(Rx[¬1..] == 9000, "End Session");
+var CmProof = Rx[..¬2];
+
+Rx      = @ReaderB.Apdu("WSAM", 9040 0002 ((u8)(2 + Sig.Length)) ((u16)Sig.Length) Sig);
+@Assert(Rx[¬1..] == 9000, "WSAM");
+
+Rx      = @ReaderB.Apdu("PIMO", 904A000004 00040008 00);
+@Assert(Rx[¬1..] == 9000, "PIMO");
+var IsamProof = Rx[..¬2];
+
+@Test(CmProof == IsamProof, "Verify the session signatures.");

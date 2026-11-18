@@ -16,9 +16,9 @@ package com.digitallocksmiths.ItsoHce.VcardCmd11;
 
 
 // ##########################################################################
-// ToDo: generate tests
+// ToDo: generate tests for
 //      A: Max size IPE.
-//      B: Case of each command i.e. eas Lc/Le used appropriately
+//      B: Case of each command i.e.  Lc/Le used appropriately
 //      C: Can manage mone- 9000 SW12 responses.
 
 
