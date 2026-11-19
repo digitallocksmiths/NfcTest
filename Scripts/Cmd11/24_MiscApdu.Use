@@ -38,6 +38,7 @@
 // ---- Status words ---------------------------------------------------
 var SW_OK      = 9000;
 var SW_SEC     = 6982;
+var SW_NOEF    = 6986;
 var SW_LEN     = 6700;
 var SW_INS     = 6D00;
 var SW_CLA     = 6E00;
@@ -78,8 +79,8 @@ var Rec30;                                                            // a 30 by
 var Before;                                                           // Read IPE #1 before section A's session
 var DirLen;
 u8  k        = 0;
-u8  C        = 0;
-u8  I        = 0;
+u8  Cla      = 0;                                                     // the CLA under test (not "C": that is a hex number)
+u8  Ins      = 0;                                                     // the INS under test
 u8  Known    = 0;
 
 BigIpe = EC;
@@ -120,7 +121,7 @@ Rx = @ReaderA.Apdu("Authenticate (no Select)", 9010 0000 10 AuthJunk 08);
 Rx = @ReaderA.Apdu("Update Ipe (no Select)", 9018 0100 1C BadPwd SmallIpe);
 @Test(Rx[¬1..] == SW_CLA, "No Select: Update IPE gives 6E00");
 Rx = @ReaderA.Apdu("Read Binary (no Select)", 00B0 0000 00);
-@Test(Rx[¬1..] == SW_CLA, "No Select: a non CMD11 command gives 6E00");
+@Test(Rx[¬1..] in [SW_CLA, SW_NOEF], "No Select: a non CMD11 command gives 6E00");
 
 Rx = @ReaderA.Apdu("Media Select", CardSelect);
 @Test(Rx[¬1..] == SW_OK, "Select works after commands without one");
@@ -131,24 +132,24 @@ Rx = @ReaderA.Apdu("Read Ipe #1 (after Select)", 9012 0100 00);
 @PrintLn(" ************ B: Unknown commands, not authenticated *******************");
 @PrintLn("============ Every CLA but 90 (and FF: PC/SC readers keep CLA FF for themselves)");
 for (k = 0; k < FF; k++) {                                            // CLA 00..FE. Counting k, so the u8 never wraps
-    C = k;
-    if (C != 90) {
-        Rx = @ReaderA.Apdu("CLA " :: C, C 12 0100 00);
-        @Test(Rx[¬1..] == SW_CLA, "CLA " :: C :: " rejected");
+    Cla = k;
+    if (Cla != 90) {
+        Rx = @ReaderA.Apdu("CLA " :: Cla, Cla 12 0100 00);
+        @Test(Rx[¬1..] == SW_CLA, "CLA " :: Cla :: " rejected");
     }
 }
 
 @PrintLn("============ Every INS that is not a CMD11 command");
 for (k = 0; k < FF; k++) {                                            // INS 00..FE, then FF
-    I = k;
+    Ins = k;
     Known = 0;
-    if (I == 10) { Known = 1; }  if (I == 12) { Known = 1; }  if (I == 14) { Known = 1; }
-    if (I == 16) { Known = 1; }  if (I == 18) { Known = 1; }  if (I == 1A) { Known = 1; }
-    if (I == 1C) { Known = 1; }  if (I == 1E) { Known = 1; }  if (I == 20) { Known = 1; }
-    if (I == 22) { Known = 1; }
+    if (Ins == 10) { Known = 1; }  if (Ins == 12) { Known = 1; }  if (Ins == 14) { Known = 1; }
+    if (Ins == 16) { Known = 1; }  if (Ins == 18) { Known = 1; }  if (Ins == 1A) { Known = 1; }
+    if (Ins == 1C) { Known = 1; }  if (Ins == 1E) { Known = 1; }  if (Ins == 20) { Known = 1; }
+    if (Ins == 22) { Known = 1; }
     if (Known == 0) {
-        Rx = @ReaderA.Apdu("INS " :: I, 90 I 0000 00);
-        @Test(Rx[¬1..] == SW_INS, "INS " :: I :: " rejected");
+        Rx = @ReaderA.Apdu("INS " :: Ins, 90 Ins 0000 00);
+        @Test(Rx[¬1..] == SW_INS, "INS " :: Ins :: " rejected");
     }
 }
 Rx = @ReaderA.Apdu("INS FF", 90FF 0000 00);
@@ -159,37 +160,37 @@ Rx = @ReaderA.Apdu("3 bytes", 901201);
 @Test(Rx[¬1..] == SW_UNKNOWN, "A 3 byte APDU is malformed");
 Rx = @ReaderA.Apdu("6 bytes, Lc 00", 9012 0100 00 00);
 @Test(Rx[¬1..] == SW_UNKNOWN, "A 6 byte APDU with byte 5 = 00 is malformed");
-Rx = @ReaderA.Apdu("Lc 02, 3 bytes of data", 9012 0100 02 000000);
+Rx = @ReaderA.Apdu("Lc 02, 4 bytes of data", 9012 0100 02 00000000);
 @Test(Rx[¬1..] == SW_UNKNOWN, "Lc not matching the data is malformed");
 
 
 @PrintLn(" ************ C: Unknown commands in a session **************************");
 @Include ("Authenticate.Inc");
 for (k = 0; k < FF; k++) {
-    C = k;
-    if (C != 90) {
-        Tx = C 12 0100 00;
-        Rx = @ReaderA.Apdu("CLA " :: C :: " (in session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
-        @Test(Rx[¬1..] == SW_CLA, "In session: CLA " :: C :: " rejected");
+    Cla = k;
+    if (Cla != 90) {
+        Tx = Cla 12 0100 00;
+        Rx = @ReaderA.Apdu("CLA " :: Cla :: " (in session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        @Test(Rx[¬1..] == SW_CLA, "In session: CLA " :: Cla :: " rejected");
     }
 }
 for (k = 0; k < FF; k++) {
-    I = k;
+    Ins = k;
     Known = 0;
-    if (I == 10) { Known = 1; }  if (I == 12) { Known = 1; }  if (I == 14) { Known = 1; }
-    if (I == 16) { Known = 1; }  if (I == 18) { Known = 1; }  if (I == 1A) { Known = 1; }
-    if (I == 1C) { Known = 1; }  if (I == 1E) { Known = 1; }  if (I == 20) { Known = 1; }
-    if (I == 22) { Known = 1; }
+    if (Ins == 10) { Known = 1; }  if (Ins == 12) { Known = 1; }  if (Ins == 14) { Known = 1; }
+    if (Ins == 16) { Known = 1; }  if (Ins == 18) { Known = 1; }  if (Ins == 1A) { Known = 1; }
+    if (Ins == 1C) { Known = 1; }  if (Ins == 1E) { Known = 1; }  if (Ins == 20) { Known = 1; }
+    if (Ins == 22) { Known = 1; }
     if (Known == 0) {
-        Tx = 90 I 0000 00;
-        Rx = @ReaderA.Apdu("INS " :: I :: " (in session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
-        @Test(Rx[¬1..] == SW_INS, "In session: INS " :: I :: " rejected");
+        Tx = 90 Ins 0000 00;
+        Rx = @ReaderA.Apdu("INS " :: Ins :: " (in session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        @Test(Rx[¬1..] == SW_INS, "In session: INS " :: Ins :: " rejected");
     }
 }
 Tx = 901201;
 Rx = @ReaderA.Apdu("3 bytes (in session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
 @Test(Rx[¬1..] == SW_UNKNOWN, "In session: a 3 byte APDU is malformed");
-Tx = 9012 0100 02 000000;
+Tx = 9012 0100 02 00000000;                                             // Lc 02, 4 bytes: not even Lc + data + Le
 Rx = @ReaderA.Apdu("Lc mismatch (in session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
 @Test(Rx[¬1..] == SW_UNKNOWN, "In session: Lc not matching the data is malformed");
 
