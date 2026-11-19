@@ -4,7 +4,7 @@
 //  that a rejected update changes nothing (the FIFO does not move) and
 //  leaves the session running. (ISO case checks are in 07_CommandStructure;
 //  every record length, every illegal Lc, the FIFO and commit/discard are
-//  in 10_LogUpdateCommit.)
+//  in 19_LogUpdateCommit.)
 //
 //      P1 = P2 = 00, otherwise 6A86.
 //      The password must be the log's own (slot E), otherwise 6300.

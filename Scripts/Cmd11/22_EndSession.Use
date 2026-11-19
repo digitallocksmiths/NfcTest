@@ -3,7 +3,7 @@
 //  Tests End Session (9020 0000 08 sig 00): what it commits, what it
 //  returns, and what happens to the session and its updates when it is
 //  rejected. (P1/P2 and ISO case checks are also in 07_CommandStructure;
-//  End Session before authentication is in 12_Reselect, gate 1.)
+//  End Session before authentication is in 09_Reselect, gate 1.)
 //
 //  End Session takes the session MAC (8 bytes) the ISAM makes from the
 //  hash of every exchange since authentication. When it matches, the
@@ -12,7 +12,7 @@
 //  the Select FCI (tag C4). Any End Session that reaches the card ends
 //  the session.
 //
-//  The data written is a test IPE in an empty slot (as 08_IpeUpdateCommit),
+//  The data written is a test IPE in an empty slot (as 12_IpeUpdateCommit),
 //  marked with a Mark byte so each version can be told apart.
 //
 //  Setup: Find an empty directory entry (IpeNo). CREATE_IPE + WDIR, add an

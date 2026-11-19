@@ -3,7 +3,7 @@
 //  Tests what Update VRG (901A P1 00 Lc pwd[8] VRG) accepts and rejects,
 //  and that a rejected update changes nothing and leaves the session
 //  running. (ISO case checks are in 07_CommandStructure; overwrites, every
-//  feasible size and commit/discard are in 09_VrgUpdateCommit.)
+//  feasible size and commit/discard are in 15_VrgUpdateCommit.)
 //
 //  VRG layout:  [size byte][body][seal 16], size = size byte & FC, counting
 //  the size byte itself, so Lc = 8 + size + 16.

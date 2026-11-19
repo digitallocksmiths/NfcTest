@@ -2,7 +2,7 @@
 //
 //  Tests Read Log (9016 P1 00 00): which record counts it accepts and what
 //  it returns. (ISO case checks are in 07_CommandStructure; the FIFO
-//  behaviour of Update Log is in 10_LogUpdateCommit.)
+//  behaviour of Update Log is in 19_LogUpdateCommit.)
 //
 //  Response:  the newest P1 records, newest first, 30 bytes (48 decimal)
 //             each, then 9000. P1 = 1..5, P2 = 00, otherwise 6A86.

@@ -3,7 +3,7 @@
 //  Tests what Update Dir (901E 0000 Lc pwd[8] directory) rejects, and that
 //  a rejected update changes nothing and leaves the session running.
 //  (ISO case checks are in 07_CommandStructure; repeated overwrites, every
-//  illegal Lc and commit/discard are in 11_DirUpdateCommit.)
+//  illegal Lc and commit/discard are in 21_DirUpdateCommit.)
 //
 //      P1 = P2 = 00, otherwise 6A86.
 //      The password must be the directory's own (slot E+1), otherwise 6300.

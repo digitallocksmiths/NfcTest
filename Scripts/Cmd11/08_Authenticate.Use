@@ -4,7 +4,7 @@
 //  answers, that a challenge can be used only once, what it unlocks, and
 //  (pseudo UID cards) that the two step pseudo authentication can't be
 //  skipped or repeated. (P1/P2 and ISO case checks are in
-//  07_CommandStructure; update permissions are in 12_Reselect.)
+//  07_CommandStructure; update permissions are in 09_Reselect.)
 //
 //  Static UID card:  Select -> Authenticate -> session.
 //  Pseudo UID card:  Select (random UID FCI) -> Authenticate (pseudo keys)

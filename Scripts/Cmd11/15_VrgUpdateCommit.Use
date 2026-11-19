@@ -1,7 +1,7 @@
 // !TestName: VrgUpdateCommit
 //
 //  Tests the data written by Update VRG (901A) and when it is committed.
-//  The same as 08_IpeUpdateCommit, but for the VRG of the slot, plus checks
+//  The same as 12_IpeUpdateCommit, but for the VRG of the slot, plus checks
 //  that VRG updates leave the slot's IPE alone.
 //
 //  VRG layout:  [size byte][body .....][seal 16]   (the same as an IPE)
