@@ -1,0 +1,247 @@
+// !TestName: UpdateLog
+//
+//  Tests what Update Log (901C 0000 Lc pwd[8] record[1..30]) rejects, and
+//  that a rejected update changes nothing (the FIFO does not move) and
+//  leaves the session running. (ISO case checks are in 07_CommandStructure;
+//  every record length, every illegal Lc, the FIFO and commit/discard are
+//  in 10_LogUpdateCommit.)
+//
+//      P1 = P2 = 00, otherwise 6A86.
+//      The password must be the log's own (slot E), otherwise 6300.
+//
+//  Setup: Get the log password (CREATE_IPE on slot E) and, for the wrong
+//     password test, the password of an empty IPE slot. Read the log
+//     (OrigLog) and every IPE and VRG (Snapshot).
+//  A: In one session, all with an otherwise good 30 byte record:
+//       A1: Every P1 from 01 to FF: 6A86. Every P2 from 01 to FF: 6A86.
+//       A2: Wrong password (all FF; last byte changed; an IPE slot's
+//           password): 6300.
+//       After each group the log reads back unchanged: no record went in,
+//       none moved down.
+//       A3: A good update is then accepted, and goes in at the head.
+//       The IPEs and VRGs are unchanged. Commit: the session survived
+//       every rejection (all exchanges are in the hash).
+//  B: After commit and reset: the log holds the good record at the head;
+//     the directory, IPEs and VRGs are as at the start.
+//  C: Write the original 5 records back, oldest first, and commit.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//                  Card to have at least one empty IPE entry in the directory
+//                  (only for its password: nothing is written to it).
+//
+//  If the test stops part way, the log may be left with a test record.
+//  The original is printed at the start (OrigLog).
+//
+
+// ---- Status words ---------------------------------------------------
+var SW_OK     = 9000;
+var SW_AUTH   = 6300;
+var SW_P1P2   = 6A86;
+
+// ---- Variables used by Authenticate.Inc, Commit.Inc & LogUpdate.Inc ---
+var CardAid    = @Itso.Aid;
+var CardSelect = 00A40400 CardAid.Length CardAid;
+var HashAcc;
+var Hash;
+var Sig;
+var CmProof;
+var IsamProof;
+var RaResp;
+var RaFci;
+var Ra6F;
+var RaA5;
+var RaShell;
+var RaDir;
+var RaChal;
+var RaPUid;
+var RaSUid;
+var RaKas;
+var RaBody;
+var RaIsam;
+var RaMedia;
+
+var Tx;
+var Rx;
+
+var LogPwd;                                                           // sector password for the log (slot E)
+var Rec;
+u8  Len      = 0;
+var Model;                                                            // expected 5 records (F0 bytes), newest first
+u8  Mark     = 0;
+
+var Zeros    = 00;                                                    // 30 bytes of 00 (LogUpdate.Inc pads with these)
+u8  Pb       = 0;
+for (Pb = 1; Pb < 30; Pb++) {
+    Zeros = Zeros 00;
+}
+var Pattern  = 01;                                                    // 01 02 03 ... 40: record filler, never 00
+for (Pb = 2; Pb <= 40; Pb++) {
+    Pattern = Pattern Pb;
+}
+
+var OrigLog;
+var OrigDir;
+var Good;                                                             // a good 30 byte record
+var BadPwd   = FFFFFFFFFFFFFFFF;
+var NearPwd;                                                          // LogPwd with its last byte changed
+var IpePwd;                                                           // an IPE slot's password
+var Snapshot;
+var Snap2;
+var Entry;
+u8  k        = 0;
+u8  P        = 0;
+u8  n        = 0;
+u8  Slot     = 0;
+u8  IpeNo    = 0;
+u8  ShellE   = 0;
+
+// ---- Log creation, as 06_ReadAndUpdate --------------------------------
+var LogE_Orphan = 7F80000000;                                         // Orphan entry for the seal
+var IsamLog     = 1C0400FCC7A29E80009B0000CA000D5222000001CA000D522200000000FF000000000000;
+var IpeEntry    = 440440A3CA;
+var IsamIpe     = 1801FF1003600065 03E80F9F01F307D0 8F14000200000000 1088080000000000;
+
+
+@PrintLn(" ************ Setup: passwords and the card as found *******************");
+@Include ("Authenticate.Inc");
+OrigDir = RaDir;
+ShellE  = RaShell[18_d];
+
+Tx = LogE_Orphan IsamLog;
+Rx = @ReaderB.Apdu("WSAM LOG", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("CREATE_IPE (log)", 9052 ((u8)(ShellE-1)) 00 01 01 00);  // P1 = E - 1
+@Assert(Rx[¬1..] == SW_OK, "CREATE_IPE");
+LogPwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+NearPwd = LogPwd[0..6] LogPwd[0];                                     // last byte replaced
+if (NearPwd == LogPwd) { NearPwd = LogPwd[0..6] LogPwd[1]; }
+
+for (Slot = 1; Slot < ShellE; Slot++) {                               // an empty IPE slot, for its password
+    Entry = RaDir[(2 + 5*(Slot-1))..(2 + 5*(Slot-1) + 4)];
+    if (Entry == 0000000000) {
+        IpeNo = Slot;
+    }
+}
+@Assert(IpeNo != 0, "The directory needs an empty IPE entry");
+Tx = IpeEntry IsamIpe;
+Rx = @ReaderB.Apdu("WSAM IPE", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("CREATE_IPE (slot " :: IpeNo :: ")", 9052 ((u8)(IpeNo-1)) 00 01 01 00);
+@Assert(Rx[¬1..] == SW_OK, "CREATE_IPE");
+IpePwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+
+Tx = 9016 0500 00;
+Rx = @ReaderA.Apdu("Read 5 Log (as found)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Read Log");
+OrigLog = Rx[..¬2];
+@Debug(OrigLog);
+
+Snapshot = 00;
+for (Slot = 1; Slot < ShellE; Slot++) {
+    Tx = 9012 Slot 00 00;
+    Rx = @ReaderA.Apdu("Read Ipe #" :: Slot :: " (snapshot)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    Snapshot = Snapshot Slot Rx;
+    Tx = 9014 Slot 00 00;
+    Rx = @ReaderA.Apdu("Read Vrg #" :: Slot :: " (snapshot)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    Snapshot = Snapshot Slot Rx;
+}
+
+
+@PrintLn(" ************ A: Rejections, in one session ****************************");
+@Include ("Authenticate.Inc");
+Model = OrigLog;
+Mark  = A1;
+Len   = 30;
+Good  = Mark Len Pattern[0..2D];                                      // 30 bytes
+
+@PrintLn("============ A1: Illegal P1 (01..FF) and P2 (01..FF)");
+for (k = 0; k < FF; k++) {                                            // Counting k, so the u8 never wraps
+    P  = 1 + k;
+    Tx = 901C P 00 38 LogPwd Good;
+    Rx = @ReaderA.Apdu("Update Log P1 " :: P, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_P1P2, "P1 " :: P :: " rejected");
+}
+for (k = 0; k < FF; k++) {
+    P  = 1 + k;
+    Tx = 901C 00 P 38 LogPwd Good;
+    Rx = @ReaderA.Apdu("Update Log P2 " :: P, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_P1P2, "P2 " :: P :: " rejected");
+}
+Tx = 9016 0500 00;
+Rx = @ReaderA.Apdu("Read 5 Log", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[..¬2] == Model, "A1: log unchanged, the FIFO did not move");
+
+@PrintLn("============ A2: Wrong passwords");
+Tx = 901C 0000 38 BadPwd Good;
+Rx = @ReaderA.Apdu("Update Log, password all FF", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "Password all FF rejected");
+Tx = 901C 0000 38 NearPwd Good;
+Rx = @ReaderA.Apdu("Update Log, password last byte changed", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "Password with only its last byte wrong rejected");
+Tx = 901C 0000 38 IpePwd Good;
+Rx = @ReaderA.Apdu("Update Log, IPE slot #" :: IpeNo :: "'s password", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "An IPE slot's password rejected");
+Tx = 9016 0500 00;
+Rx = @ReaderA.Apdu("Read 5 Log", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[..¬2] == Model, "A2: log unchanged, the FIFO did not move");
+
+@PrintLn("============ A3: A good update after all that");
+Rec = Good;
+@Include ("LogUpdate.Inc");
+Tx = 9016 0500 00;
+Rx = @ReaderA.Apdu("Read 5 Log", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[..¬2] == Model, "The good record went in at the head, the others moved down one");
+
+Snap2 = 00;
+for (Slot = 1; Slot < ShellE; Slot++) {
+    Tx = 9012 Slot 00 00;
+    Rx = @ReaderA.Apdu("Read Ipe #" :: Slot, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    Snap2 = Snap2 Slot Rx;
+    Tx = 9014 Slot 00 00;
+    Rx = @ReaderA.Apdu("Read Vrg #" :: Slot, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    Snap2 = Snap2 Slot Rx;
+}
+@Test(Snap2 == Snapshot, "Every IPE and VRG is untouched");
+
+@Include ("Commit.Inc");                                              // every rejected exchange is in the hash
+
+
+@PrintLn(" ************ B: After commit ******************************************");
+@Include ("Authenticate.Inc");
+@Test(RaDir == OrigDir, "The directory is as at the start");
+Tx = 9016 0500 00;
+Rx = @ReaderA.Apdu("Read 5 Log (committed)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[..¬2] == Model, "Committed: the good record at the head, the others one place down");
+Snap2 = 00;
+for (Slot = 1; Slot < ShellE; Slot++) {
+    Tx = 9012 Slot 00 00;
+    Rx = @ReaderA.Apdu("Read Ipe #" :: Slot, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    Snap2 = Snap2 Slot Rx;
+    Tx = 9014 Slot 00 00;
+    Rx = @ReaderA.Apdu("Read Vrg #" :: Slot, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    Snap2 = Snap2 Slot Rx;
+}
+@Test(Snap2 == Snapshot, "Committed: every IPE and VRG as at the start");
+
+
+@PrintLn(" ************ C: Restore the original log ******************************");
+@Print("Original : " :: OrigLog);
+Len  = 30;
+Mark = 00;                                                            // no Mark in restored records: 00 just labels the messages
+for (n = 5; n >= 1; n--) {                                            // oldest first, so #1 ends up at the head
+    Rec = OrigLog[(30*(n-1))..(30*n - 1)];
+    @Include ("LogUpdate.Inc");
+}
+@Include ("Commit.Inc");
+
+@Include ("Authenticate.Inc");
+Tx = 9016 0500 00;
+Rx = @ReaderA.Apdu("Read 5 Log (restored)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[..¬2] == OrigLog, "Original log restored");
