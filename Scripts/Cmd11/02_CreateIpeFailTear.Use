@@ -1,11 +1,25 @@
 // !TestName: Create Ipe & Log (Tear)
 //
-//  Tests the secure messageing and failure to commit
+//  A session that is never committed must leave the card as it was
+//  (a "tear": the card is taken away before End Session).
 //
-//  Expects Card on Reader 1 (A)
-//          ISAM in Reader 2 (B)
-//          Card to have an empty slot 1 for the new IPE.
+//  1: Authenticate (01_Auth) and verify the directory with the ISAM.
+//  2: Have the ISAM create (CREATE_IPE) a VRG and an IPE for slot 1 and a
+//     new log for slot E, and sign (WDIR) a directory with entries for
+//     both. Each comes with its sector password.
+//  3: Write all four to the card in one session: Update Ipe, Update Vrg,
+//     Update Log, Update Dir. Each must give 9000.
+//  4: Have the ISAM sign the session, but do NOT send End Session.
+//  5: Warm reset, select again (and, for a pseudo UID card, redo the
+//     pseudo step and Reselect to get the static FCI).
 //
+//  Pass:  the shell, directory, OID list and CSS in the new FCI are the
+//         same as before step 3: none of the session's updates stuck.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//                  Slot 1 empty (CREATE_IPE needs an empty entry).
+//  Leaves the card unchanged, so 03 can then create the same IPE.
 //
 
 @Include ("01_Auth.Use");        // Sets variables including 'Directory'
@@ -220,7 +234,7 @@ if (PseudoUid.Length != 0) {                                            // Did w
     @Assert(_Media_Resp[¬1..] == 9000, "Authenticate OK?");
 
     @PrintLn("Isam External Authenticate (pseudo)");
-    var _ExtAuth      = 00 82 00 _Kas1Kas2[1] (Media_Resp.Length - 2) _Media_Resp[..¬2];
+    var _ExtAuth      = 00 82 00 _Kas1Kas2[1] (_Media_Resp.Length - 2) _Media_Resp[..¬2];
     var _ExtAuth_Resp = @ReaderB.Apdu(_ExtAuth);
     @Assert(_ExtAuth_Resp[¬1..] == 9000, "External Authenticate OK?");
 

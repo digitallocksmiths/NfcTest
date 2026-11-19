@@ -1,11 +1,28 @@
 // !TestName: Create Ipe & Log (Success)
 //
-//  Tests the secure messageing and commit
+//  The same session as 02_CreateIpeFailTear, but committed: the updates
+//  must stick, and the commit must be confirmed.
 //
-//  Expects Card on Reader 1 (A)
-//          ISAM in Reader 2 (B)
-//          Card to have an empty slot 1 for the new IPE.
+//  1: Authenticate (01_Auth) and verify the directory with the ISAM.
+//  2: Have the ISAM create (CREATE_IPE) a VRG and an IPE for slot 1 and a
+//     new log for slot E, and sign (WDIR) a directory with entries for
+//     both.
+//  3: Write all four to the card in one session: Update Ipe, Update Vrg,
+//     Update Log, Update Dir.
+//  4: Commit: the ISAM signs the session hash, End Session sends it, and
+//     the card's Commit Confirmation Signature (CSS) is checked against
+//     the ISAM's (the card and ISAM hashed the same exchanges).
+//  5: Warm reset, select again (and, for a pseudo UID card, redo the
+//     pseudo step and Reselect to get the static FCI).
 //
+//  Pass:  the card's CSS matches the ISAM's; after the reset the
+//         directory and OID list have changed (slot 1 now has its entry
+//         and OID), and the FCI's CSS (C4) is the one End Session gave.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//                  Slot 1 empty (CREATE_IPE needs an empty entry).
+//  Leaves an IPE and VRG in slot 1 and a new log: the state 04..07 expect.
 //
 
 @Include ("01_Auth.Use");        // Sets variables including 'Directory'
@@ -233,7 +250,7 @@ if (PseudoUid.Length != 0) {                                            // Did w
     @Assert(_Media_Resp[¬1..] == 9000, "Authenticate OK?");
 
     @PrintLn("Isam External Authenticate (pseudo)");
-    var _ExtAuth      = 00 82 00 _Kas1Kas2[1] (Media_Resp.Length - 2) _Media_Resp[..¬2];
+    var _ExtAuth      = 00 82 00 _Kas1Kas2[1] (_Media_Resp.Length - 2) _Media_Resp[..¬2];
     var _ExtAuth_Resp = @ReaderB.Apdu(_ExtAuth);
     @Assert(_ExtAuth_Resp[¬1..] == 9000, "External Authenticate OK?");
 

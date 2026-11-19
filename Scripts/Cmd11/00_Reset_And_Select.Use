@@ -1,9 +1,18 @@
 // !TestName: 00_Reset_And_Select
 //
-//  Test Description here
-//  more...
+//  Smoke test: can the card be reached and selected at all?
 //
-//  End of comments marks the end of this description.
+//  Cold resets Reader A, selects the CMD11 application by its AID and
+//  splits the FCI into its tags, printing each one:
+//      C0 shell, C1 capabilities, C2 directory, C3 OID list, C4 CSS,
+//      C5 challenge, C6 pseudo UID, C7 static UID, C8 KAS
+//  (A pseudo UID card shows C6 and no C2, C3 or C7 until it has been
+//  pseudo authenticated: see 01_Auth.)
+//
+//  Pass:  Select gives 9000 and an FCI. The tags are printed for
+//         inspection only; their contents are not checked here.
+//
+//  Prerequisite:   Card on Reader A. No ISAM needed.
 //
 
 @ReaderA.reset.cold;

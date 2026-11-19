@@ -1,14 +1,32 @@
 // !TestName: Generic Authenticate.
 //
-//  Copes with Static and Random UIDs
+//  Authenticates the card with the ISAM, ending fully authenticated. Run
+//  on its own it is a test; it is also @Included by 02, 03, 05, 06 and
+//  07 to open a session.
 //
-// If running this test as part of the full CMD11 set, you need to
-// start with an empty card. i.e. no IPEs.
+//  Static UID card:
+//      Select -> ISAM Begin (shell, static UID, challenge)
+//             -> Media Authenticate -> ISAM External Authenticate
+//  Pseudo UID card (the Select FCI has a C6 pseudo UID):
+//      Select -> ISAM Begin (pseudo shell, pseudo UID, challenge)
+//             -> Media Authenticate -> ISAM External Authenticate
+//             -> Reselect (now the static FCI: real shell, directory,
+//                static UID, new challenge) -> ISAM End
+//      then the static steps above against the Reselect FCI.
 //
-//  Expects Card on Reader 1 (A)
-//          ISAM in Reader 2 (B)
+//  Pass:  every step gives 9000; the last (ISAM External Authenticate,
+//         the ISAM accepting the card's response) is the @Test.
 //
-//  Exits with the card selected and authenticated.
+//  Leaves set, for scripts that include it:
+//      Fci, Shell, Capabilities, Directory, OidList, OldCSS, Challenge,
+//      PseudoUid, StaticUid, Kas1Kas2 (from the static FCI where there
+//      is one), Media_Resp, and the card fully authenticated with no
+//      exchanges yet in its session hash.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//  Running the whole CMD11 set from here: start with an empty card (no
+//  IPEs), as 02 and 03 create the IPE in slot 1 that 04..07 expect.
 //
 
 @ReaderA.Reset.cold;  // Card

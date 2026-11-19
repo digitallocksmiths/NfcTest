@@ -1,7 +1,23 @@
 // !TestName: Post Authenticate Read.
 //
-//  Read files after authentication
-//  
+//  The same reads as 04_PreAuthReadLog, but after full authentication
+//  (01_Auth): the only difference must be that the seals are no longer
+//  redacted.
+//
+//      Read Log  (9016 P1 00 00): P1 = 00 and 06 give 6A86, 01..05 give
+//                9000.
+//      Read IPE  (9012 P1 00 00): slot 0 gives 6A86; slot 1 gives 9000
+//                with the real seal (not all FF); slots 2..E-1 give 6A83;
+//                slot E gives 6A86.
+//      Read VRG  (9014 P1 00 00): the same as Read IPE.
+//
+//  The real seal is checked by comparing its two 8 byte halves, which
+//  are only equal when the seal is redacted.
+//
+//  Prerequisite:   Card on Reader A, as left by 03 (slot 1 occupied,
+//                  every other IPE slot empty).
+//                  ISAM in Reader B.
+//  Fuller read checks are in 10_ReadIpe, 13_ReadVrg and 17_ReadLog.
 //
 
 
@@ -72,7 +88,7 @@ Res = @ReaderA.Apdu("Read  Vrg #" :: _bE , 9014 ((u8)_bE) 00 00 );
 _bE++;
 
 Res = @ReaderA.Apdu("Read  Vrg #" :: _bE , 9014 ((u8)_bE) 00 00 );
-@Test(Res[¬1..] == 9000, "Read IPE should not clip the seal");
+@Test(Res[¬1..] == 9000, "Read VRG should not clip the seal");
 if (Res[¬1..] == 9000) {
     @Test(Res[¬17_d..¬10_d] != Res[¬9..¬2], "Seal should not be redacted");
 }
@@ -80,7 +96,7 @@ _bE++;
 
 for ( ; _bE<ShellE; _bE++) {
     Res = @ReaderA.Apdu("Read  Vrg #" :: _bE , 9014 ((u8)_bE) 00 00 );
-    @Test(Res[¬1..] == 6A83 , "Read IPE be record not found");
+    @Test(Res[¬1..] == 6A83 , "Read VRG be record not found");
 }
 
 Res = @ReaderA.Apdu("Read  Vrg #"::_bE, 9014 ((u8)_bE) 00 00 );
