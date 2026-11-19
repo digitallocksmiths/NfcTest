@@ -1,0 +1,290 @@
+// !TestName: DirUpdateCommit
+//
+//  Tests the data written by Update Dir (901E) and when it is committed.
+//
+//  Update Dir data = password[8] :: directory, P1 = P2 = 00. The directory
+//  is always the same length (DirLen, as read from the card), so
+//  Lc = 8 + DirLen and every other Lc is illegal. The directory password
+//  is the sector password for slot E+1, from the ISAM WDIR.
+//  The card does not check the directory seal, but the ISAM does
+//  (VERIFY_ITSO in Authenticate.Inc), so only ISAM signed directories may
+//  be committed: OrigDir (as found) and SignedDir (OrigDir with an entry
+//  added for slot IpeNo). Any content may be written within a session.
+//
+//  Which directory the card is using is seen in two ways:
+//      in session:   Read IPE #IpeNo (DirProbe.Inc) gives 6A83 when the
+//                    entry is empty, or 9000 and the entry when it is not;
+//      after reset:  the directory in the Select FCI (RaDir).
+//
+//  Setup: Find an empty directory entry (IpeNo). CREATE_IPE on it, write a
+//     fixed IPE to it, and WDIR a directory with an entry for it to get
+//     SignedDir and the directory password.
+//  A: In one session, overwrite the directory again and again, 3 rounds of:
+//     Junk1 (slot entry A1A2A3A4A5), OrigDir, Junk2 (all FF, slot empty),
+//     SignedDir. After each write the card must use the new directory.
+//     Every illegal length (Lc 01..FF except 8 + DirLen) and a wrong
+//     password are rejected and leave the directory alone. Commit
+//     (SignedDir), reset, check.
+//  B: 4 sessions, committing OrigDir, SignedDir, OrigDir, SignedDir: after
+//     each reset the FCI directory and slot IpeNo match the last commit,
+//     and the IPE data is still there when the entry comes back.
+//  C: Updates that are not committed must not be kept, and the previously
+//     committed directory must be in use in their place:
+//       C1: write OrigDir, then reset without End Session.
+//       C2: write OrigDir, then End Session with a bad signature (6300).
+//           Also checks the old directory, not the abandoned one, is in
+//           use before the reset.
+//  D: Write OrigDir back (IpeNo empty again) and commit.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//                  Card to have at least one empty IPE entry in the directory.
+//                  The last empty one is used.
+//
+//  If the test stops part way, the directory may be left with the extra
+//  entry. The original is printed at the start (OrigDir).
+//
+
+// ---- Status words ---------------------------------------------------
+var SW_OK     = 9000;
+var SW_AUTH   = 6300;
+var SW_LEN    = 6700;
+var SW_NOREC  = 6A83;
+
+// ---- Variables used by Authenticate.Inc & Commit.Inc -------------------
+var CardAid    = @Itso.Aid;
+var CardSelect = 00A40400 CardAid.Length CardAid;
+var HashAcc;
+var Hash;
+var Sig;
+var CmProof;
+var IsamProof;
+var RaResp;
+var RaFci;
+var Ra6F;
+var RaA5;
+var RaShell;
+var RaDir;
+var RaChal;
+var RaPUid;
+var RaSUid;
+var RaKas;
+var RaBody;
+var RaIsam;
+var RaMedia;
+
+var Tx;
+var Rx;
+
+// ---- Variables used by DirWrite.Inc & DirProbe.Inc --------------------
+var DirPwd;                                                           // directory password, from WDIR
+var ExpDir;                                                           // the directory written / expected in use
+var Entry;
+u8  IpeNo    = 0;
+u8  Off      = 0;                                                     // offset of entry IpeNo in the directory
+u8  Step     = 0;                                                     // counts the directory writes, for the messages
+
+// ---- Directories -------------------------------------------------------
+var IpeEntry = 440440A3CA;                                            // type 2 IPE entry, as 06_ReadAndUpdate
+var IsamIpe  = 1801FF1003600065 03E80F9F01F307D0 8F14000200000000 1088080000000000;
+var OrigDir;                                                          // directory as found, restored in D
+var NewDir;                                                           // OrigDir with IpeNo occupied
+var SignedDir;                                                        // NewDir, signed by the ISAM
+var Junk1;                                                            // OrigDir with entry IpeNo = A1A2A3A4A5 (not signed)
+var Junk2;                                                            // all FF, entry IpeNo empty (not signed)
+var Committed;                                                        // the directory as at the last commit
+u8  DirLen   = 0;
+u8  ShellE   = 0;
+u8  Slot     = 0;
+
+// ---- The slot's IPE ----------------------------------------------------
+var SealTail = 5EA15EA15EA15EA15EA15EA15EA1;                         // 14 bytes
+var Redacted = FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;                      // 16 bytes. Seal as seen before authentication
+var Pwd;                                                              // sector password for IPE #IpeNo
+var FixedIpe;
+u8  Size     = 28;                                                    // 40 decimal
+
+var Pattern  = 01;                                                    // 01 02 03 ... 40
+u8  Pb       = 0;
+for (Pb = 2; Pb <= 40; Pb++) {
+    Pattern = Pattern Pb;
+}
+
+var Filler   = FF;                                                    // 100 bytes of FF, for the illegal lengths
+for (Pb = 1; Pb < FF; Pb++) {
+    Filler = Filler FF;
+}
+Filler = Filler FF;
+
+var BadPwd   = FFFFFFFFFFFFFFFF;
+var Tmp;
+u8  k        = 0;
+u8  Lc       = 0;
+u8  n        = 0;
+
+
+@PrintLn(" ************ Setup: pick an empty IPE entry ***************************");
+@Include ("Authenticate.Inc");
+
+OrigDir = RaDir;
+@Debug(OrigDir);
+DirLen  = OrigDir.Length;
+ShellE  = RaShell[18_d];
+
+for (Slot = 1; Slot < ShellE; Slot++) {                               // IPE entries are 1..E-1
+    Entry = RaDir[(2 + 5*(Slot-1))..(2 + 5*(Slot-1) + 4)];
+    if (Entry == 0000000000) {                                        // all zero = empty (Directory.E_Empty)
+        IpeNo = Slot;
+    }
+}
+@Assert(IpeNo != 0, "The directory needs an empty IPE entry");
+@PrintLn("Using slot #" :: IpeNo);
+Off = 2 + 5*(IpeNo-1);
+
+@PrintLn("============ CREATE_IPE: get the sector password for slot #" :: IpeNo);
+Tx = IpeEntry IsamIpe;
+Rx = @ReaderB.Apdu("WSAM IPE", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 01 00);  // P1 = IPE# - 1
+@Assert(Rx[¬1..] == SW_OK, "CREATE_IPE");
+Pwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+
+@PrintLn("============ WDIR: sign a directory with an entry for slot #" :: IpeNo);
+NewDir = OrigDir[0..(Off-1)] IpeEntry OrigDir[(Off+5)..];
+@Debug(NewDir);
+
+Rx = @ReaderB.Apdu("WSAM Directory", 9040 0002 ((u8)(2 + NewDir.length)) ((u16)NewDir.length) NewDir);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("WDIR", 9056 0000 01 01 00);
+@Assert(Rx[¬1..] == SW_OK, "WDIR");
+DirPwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+SignedDir = Rx[..¬2];
+@Debug(SignedDir);
+@Assert(SignedDir.Length == DirLen, "Signed directory is the same length as the card's");
+
+Junk1 = OrigDir[0..(Off-1)] A1A2A3A4A5 OrigDir[(Off+5)..];
+Junk2 = Filler[0..(Off-1)] 0000000000 Filler[(Off+5)..(DirLen-1)];
+
+@PrintLn("============ Write the fixed IPE for slot #" :: IpeNo);
+FixedIpe = Size Pattern[0..(Size-2)] EE Size SealTail;
+Tx = 9018 IpeNo 00 ((u8)(Pwd.Length + FixedIpe.Length)) Pwd FixedIpe;
+Rx = @ReaderA.Apdu("Update Ipe (fixed)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Update Ipe");
+
+
+@PrintLn(" ************ A: Many overwrites in one session ***********************");
+ExpDir = OrigDir;
+@Include ("DirProbe.Inc");                                            // slot empty to start with
+
+for (n = 1; n <= 3; n++) {
+    @PrintLn("============ Round " :: n);
+    ExpDir = Junk1;      @Include ("DirWrite.Inc");  @Include ("DirProbe.Inc");
+    ExpDir = OrigDir;    @Include ("DirWrite.Inc");  @Include ("DirProbe.Inc");
+    ExpDir = Junk2;      @Include ("DirWrite.Inc");  @Include ("DirProbe.Inc");
+    ExpDir = SignedDir;  @Include ("DirWrite.Inc");  @Include ("DirProbe.Inc");
+}
+@Test(Rx[5..¬2] == FixedIpe, "The slot's IPE data is unchanged by the directory writes");
+
+@PrintLn("============ Rejected updates leave the directory alone");
+//  Every illegal Lc: 01..FF except 8 + DirLen. The data is the real password
+//  followed by filler, cut to Lc bytes, so only the length is wrong.
+//  Lc = 00 is not a case 3 APDU, so it is not tried here.
+Tmp = DirPwd Filler;                                                  // 8 + 100 bytes, enough for Lc = FF
+for (k = 0; k < FF; k++) {                                            // Lc 01..FF. Counting k, not Lc, so the u8 never wraps
+    Lc = 1 + k;
+    if (Lc != 8 + DirLen) {
+        Tx = 901E 0000 Lc Tmp[0..(Lc-1)];
+        Rx = @ReaderA.Apdu("Update Dir, Lc " :: Lc, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        @Test(Rx[¬1..] == SW_LEN, "Update Dir with Lc " :: Lc :: " (not 8 + directory length) rejected");
+    }
+}
+
+Tx = 901E 0000 ((u8)(BadPwd.Length + OrigDir.Length)) BadPwd OrigDir;
+Rx = @ReaderA.Apdu("Update Dir, wrong password", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "Update Dir with a wrong password rejected");
+
+ExpDir = SignedDir;
+@Include ("DirProbe.Inc");                                            // still the last good write
+
+@Include ("Commit.Inc");
+Committed = SignedDir;
+
+@Include ("Authenticate.Inc");
+@Test(RaDir == Committed, "Session A committed: the last directory written is in the FCI after a reset");
+ExpDir = Committed;
+@Include ("DirProbe.Inc");
+@Test(Rx[5..¬2] == FixedIpe, "IPE written in session A committed with the directory");
+
+
+@PrintLn(" ************ B: One directory per session, 4 sessions ****************");
+for (n = 1; n <= 2; n++) {
+    @PrintLn("============ Commit OrigDir");
+    if (n != 1) {
+        @Include ("Authenticate.Inc");
+    }
+    ExpDir = OrigDir;  @Include ("DirWrite.Inc");
+    @Include ("Commit.Inc");
+    Committed = OrigDir;
+    @Include ("Authenticate.Inc");
+    @Test(RaDir == Committed, "OrigDir committed: in the FCI after a reset");
+    ExpDir = Committed;
+    @Include ("DirProbe.Inc");
+
+    @PrintLn("============ Commit SignedDir");
+    @Include ("Authenticate.Inc");
+    ExpDir = SignedDir;  @Include ("DirWrite.Inc");
+    @Include ("Commit.Inc");
+    Committed = SignedDir;
+    @Include ("Authenticate.Inc");
+    @Test(RaDir == Committed, "SignedDir committed: in the FCI after a reset");
+    ExpDir = Committed;
+    @Include ("DirProbe.Inc");
+    @Test(Rx[5..¬2] == FixedIpe, "IPE data still there when its entry comes back");
+}
+
+
+@PrintLn(" ************ C1: Update without End Session is discarded *************");
+@Include ("Authenticate.Inc");
+ExpDir = OrigDir;  @Include ("DirWrite.Inc");  @Include ("DirProbe.Inc");
+
+@PrintLn("Reset without End Session");
+@Include ("Authenticate.Inc");
+@Test(RaDir == Committed, "Update not committed (no End Session) was discarded: previous directory in the FCI");
+ExpDir = Committed;
+@Include ("DirProbe.Inc");
+
+
+@PrintLn(" ************ C2: Update with a failed End Session is discarded *******");
+ExpDir = OrigDir;  @Include ("DirWrite.Inc");  @Include ("DirProbe.Inc");
+
+Rx = @ReaderA.Apdu("End Session (bad signature)", 9020 0000 08 0000000000000000 00);
+@Test(Rx[¬1..] == SW_AUTH, "End Session with a bad signature rejected");
+
+@PrintLn("Session over but no reset yet: the abandoned directory must not be in use, the old one must be");
+ExpDir = Committed;
+@Include ("DirProbe.Inc");
+@Test(Rx[5..¬2] == FixedIpe[..¬16_d] Redacted, "Abandoned directory not in use after a failed End Session: previous one in use");
+
+@Include ("Authenticate.Inc");
+@Test(RaDir == Committed, "Update discarded after a failed End Session and a reset: previous directory in the FCI");
+ExpDir = Committed;
+@Include ("DirProbe.Inc");
+
+
+@PrintLn(" ************ D: Restore the original directory ***********************");
+@Print("Original : " :: OrigDir);
+ExpDir = OrigDir;  @Include ("DirWrite.Inc");
+@Include ("Commit.Inc");
+
+@Include ("Authenticate.Inc");
+@Test(RaDir == OrigDir, "Original directory restored");
+ExpDir = OrigDir;
+@Include ("DirProbe.Inc");
