@@ -164,10 +164,13 @@ Tx = 9016 0600 00;          Rx = @ReaderA.Apdu("Read Log: P1=06",    Tx);  HashA
 Tx = 9016 0100 01 00 00;    Rx = @ReaderA.Apdu("Read Log: case 4",   Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
 @Test(Rx[¬1..] == SW_LEN,  "Auth'd Read Log: case 4 rejected");
 
+@PrintLn("Reselect is not permitted once fully authenticated: 6982 before any structure check");
+Tx = 9022 0000 00;          Rx = @ReaderA.Apdu("Reselect: control",  Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_SEC,  "Auth'd Reselect: correct case 2 refused");
 Tx = 9022 0100 00;          Rx = @ReaderA.Apdu("Reselect: P1=01",    Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
-@Test(Rx[¬1..] == SW_P1P2, "Auth'd Reselect: P1=01 rejected");
+@Test(Rx[¬1..] == SW_SEC,  "Auth'd Reselect: P1=01 refused");
 Tx = 9022 0000 01 00 00;    Rx = @ReaderA.Apdu("Reselect: case 4",   Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
-@Test(Rx[¬1..] == SW_LEN,  "Auth'd Reselect: case 4 rejected");
+@Test(Rx[¬1..] == SW_SEC,  "Auth'd Reselect: case 4 refused");
 
 
 @PrintLn(" ************ 4: Post-authentication: Updates (wrong password) *********");

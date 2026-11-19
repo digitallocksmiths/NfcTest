@@ -1,0 +1,393 @@
+// !TestName: Reselect
+//
+//  Tests Reselect (9022 0000 00) before, during and after a session.
+//  (P1/P2 and ISO case checks for Reselect are in 07_CommandStructure.)
+//
+//  Once the card is fully authenticated Reselect is refused (6982), and
+//  the session carries on (the refused exchange is in the session hash).
+//  Otherwise Reselect returns a new FCI with a new challenge:
+//      static UID card, or pseudo UID card after the pseudo authentication:
+//          C0 shell, C2 directory, C3 OID list, C5 challenge, C7 UID, C8 KAS
+//          (no C1 capabilities, C4 CSS or C6 pseudo UID)
+//      pseudo UID card before the pseudo authentication:
+//          the random UID FCI again, as Select: C0 pseudo shell, C1, C4,
+//          C5 challenge, C6 pseudo UID, C8 (no C2 directory, C3 or C7)
+//  Updates are only permitted in a fully authenticated session, and
+//  Reselect is not, so the directory in a Reselect FCI is always the
+//  committed one.
+//
+//  Update gate (UpdateGate.Inc): Update Ipe/Vrg/Log/Dir and End Session,
+//  well formed but with a dummy password/MAC, must give 6982 in every
+//  state short of full authentication, and 6300 (past the security check,
+//  failing on the password) once fully authenticated. Checked:
+//       gate 1: after Select, before any authentication
+//       gate 2: after Reselects, before any authentication
+//       gate 3: after a failed Media Authenticate
+//       gate 4: pseudo UID card, pseudo authenticated only
+//       gate 5: pseudo UID card, pseudo authenticated and Reselected
+//       gate 6: fully authenticated (6300: the control)
+//       gate 7: after End Session, and a Reselect
+//
+//  0: Learn the directory length (for well formed Update Dir commands).
+//  A: Before authentication: 5 Reselects. Every FCI matches the Select FCI
+//     (apart from the challenge), and every challenge is new. Gates 1, 2.
+//  B: The challenge that counts is the last one issued:
+//       B1: Select, 3 Reselects, then authenticate against the Select
+//           challenge: Media Authenticate must fail (6982). Gate 3.
+//       B2: Select, 3 Reselects, then authenticate against the last
+//           Reselect challenge: must succeed. A pseudo UID card is then
+//           only pseudo authenticated (gate 4), Reselects (gate 5) and
+//           authenticates again against the static FCI. Fully
+//           authenticated, Reselect is refused (6982). Gate 6.
+//  C: During a session: Reselect is refused (6982) and does not end the
+//       session. Reselect, Update Dir (an entry added for an empty slot),
+//       Reselect, 3 more Reselects, then commit: the session (and its hash,
+//       which includes the refused Reselects) is still good.
+//  D: After End Session: Reselect works again. Its FCI shows the directory
+//     committed in C, and the OID list shows the new entry's OID. It does
+//     not restart the session (gate 7: all updates rejected 6982).
+//     Authenticating against the Reselect challenge (no new Select) starts
+//     a new session, which writes the original directory back and commits.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//                  Card to have at least one empty IPE entry in the directory.
+//                  The last empty one is used.
+//
+
+// ---- Status words ---------------------------------------------------
+var SW_OK     = 9000;
+var SW_SEC    = 6982;
+var SW_AUTH   = 6300;
+
+// ---- Variables used by UpdateGate.Inc ----------------------------------
+var Expect;
+var GatePwd  = FFFFFFFFFFFFFFFF;                                      // dummy password
+var GateDir;                                                          // DirLen bytes of FF
+u8  Ctx      = 0;
+u8  DirLen   = 0;
+
+// ---- Variables used by Authenticate.Inc & Commit.Inc -------------------
+var CardAid    = @Itso.Aid;
+var CardSelect = 00A40400 CardAid.Length CardAid;
+var HashAcc;
+var Hash;
+var Sig;
+var CmProof;
+var IsamProof;
+var RaResp;
+var RaFci;
+var Ra6F;
+var RaA5;
+var RaShell;
+var RaDir;
+var RaChal;
+var RaPUid;
+var RaSUid;
+var RaKas;
+var RaBody;
+var RaIsam;
+var RaMedia;
+
+var Tx;
+var Rx;
+
+// ---- Variables used by FciParse.Inc ------------------------------------
+var RsFci;
+var Rs6F;
+var RsA5;
+var RsShell;
+var RsCap;
+var RsDir;
+var RsOid;
+var RsCss;
+var RsChal;
+var RsPUid;
+var RsSUid;
+var RsKas;
+
+// ---- The Select FCI, for comparison ------------------------------------
+var SelShell;
+var SelCap;
+var SelDir;
+var SelOid;
+var SelCss;
+var SelChal;
+var SelPUid;
+var SelSUid;
+var SelKas;
+var PrevChal;                                                         // the challenge before this one
+var Uid;                                                              // the UID the ISAM authenticates against
+var Body;
+var IsamRx;
+var MediaRx;
+u8  Pseudo   = 0;                                                     // 1 = the Select FCI has a pseudo UID
+u8  n        = 0;
+
+// ---- Directory handling -------------------------------------------
+var IpeEntry = 440440A3CA;                                            // type 2 IPE entry, as 06_ReadAndUpdate
+var IpeOid   = 1101;                                                  // its OID: (4404 >> 2) & 1FFF
+var IsamIpe  = 1801FF1003600065 03E80F9F01F307D0 8F14000200000000 1088080000000000;
+var OrigDir;
+var NewDir;
+var SignedDir;
+var DirPwd;
+var Entry;
+u8  ShellE   = 0;
+u8  IpeNo    = 0;
+u8  Slot     = 0;
+u8  Off      = 0;
+u8  OidOff   = 0;                                                     // offset of slot IpeNo's OID in the OID list
+
+
+@PrintLn(" ************ 0: Learn the directory length ****************************");
+@Include ("Authenticate.Inc");
+DirLen  = RaDir.Length;
+GateDir = FF;
+for (n = 1; n < DirLen; n++) {
+    GateDir = GateDir FF;
+}
+
+
+@PrintLn(" ************ A: Reselect before authentication ***********************");
+@ReaderA.Reset.cold;
+@ReaderB.Reset.cold;
+Rx = @ReaderB.Apdu("Isam Password", 90 18 00 00  10  @Itso.PwdI2F);
+@Assert(Rx[¬1..] == SW_OK, "Isam password OK?");
+
+RsFci = @ReaderA.Apdu("Media Select", CardSelect);
+@Assert(RsFci[¬1..] == SW_OK, "Select OK?");
+@Include ("FciParse.Inc");
+SelShell = RsShell;  SelCap = RsCap;  SelDir = RsDir;  SelOid = RsOid;  SelCss = RsCss;
+SelChal  = RsChal;   SelPUid = RsPUid; SelSUid = RsSUid; SelKas = RsKas;
+PrevChal = SelChal;
+if (SelPUid.Length != 0) {
+    Pseudo = 1;
+    @PrintLn("Pseudo UID card: Reselect must repeat the random UID FCI");
+}
+else {
+    @PrintLn("Static UID card: Reselect must give the reselect FCI");
+}
+
+@PrintLn("============ Gate 1: no updates after Select");
+Expect = SW_SEC;  Ctx = 1;
+@Include ("UpdateGate.Inc");
+
+for (n = 1; n <= 5; n++) {
+    RsFci = @ReaderA.Apdu("Reselect " :: n, 9022 0000 00);
+    @Test(RsFci[¬1..] == SW_OK, "Reselect " :: n :: " OK");
+    @Include ("FciParse.Inc");
+    @Test(RsShell == SelShell, "Reselect " :: n :: ": shell as Select");
+    @Test(RsKas   == SelKas,   "Reselect " :: n :: ": KAS as Select");
+    @Test(RsChal.Length == 8,  "Reselect " :: n :: ": has an 8 byte challenge");
+    @Test(RsChal != PrevChal,  "Reselect " :: n :: ": challenge is new");
+    if (Pseudo == 1) {
+        @Test(RsPUid == SelPUid, "Reselect " :: n :: ": pseudo UID as Select");
+        @Test(RsCap  == SelCap,  "Reselect " :: n :: ": capabilities as Select");
+        @Test(RsCss  == SelCss,  "Reselect " :: n :: ": CSS as Select");
+        @Test(RsDir.Length  == 0, "Reselect " :: n :: ": no directory before the pseudo authentication");
+        @Test(RsSUid.Length == 0, "Reselect " :: n :: ": no static UID before the pseudo authentication");
+    }
+    else {
+        @Test(RsDir  == SelDir,  "Reselect " :: n :: ": directory as Select");
+        @Test(RsOid  == SelOid,  "Reselect " :: n :: ": OID list as Select");
+        @Test(RsSUid == SelSUid, "Reselect " :: n :: ": UID as Select");
+        @Test(RsCap.Length  == 0, "Reselect " :: n :: ": no capabilities tag");
+        @Test(RsCss.Length  == 0, "Reselect " :: n :: ": no CSS tag");
+        @Test(RsPUid.Length == 0, "Reselect " :: n :: ": no pseudo UID tag");
+    }
+    PrevChal = RsChal;
+}
+
+@PrintLn("============ Gate 2: no updates after Reselects");
+Expect = SW_SEC;  Ctx = 2;
+@Include ("UpdateGate.Inc");
+
+
+@PrintLn(" ************ B1: Authenticate against a stale challenge **************");
+@ReaderA.Reset.cold;
+@ReaderB.Reset.cold;
+Rx = @ReaderB.Apdu("Isam Password", 90 18 00 00  10  @Itso.PwdI2F);
+@Assert(Rx[¬1..] == SW_OK, "Isam password OK?");
+
+RsFci = @ReaderA.Apdu("Media Select", CardSelect);
+@Assert(RsFci[¬1..] == SW_OK, "Select OK?");
+@Include ("FciParse.Inc");
+SelChal = RsChal;
+for (n = 1; n <= 3; n++) {
+    RsFci = @ReaderA.Apdu("Reselect " :: n, 9022 0000 00);
+    @Assert(RsFci[¬1..] == SW_OK, "Reselect OK?");
+}
+@Include ("FciParse.Inc");
+
+if (Pseudo == 1) { Uid = RsPUid; } else { Uid = RsSUid; }
+Body    = @Itso.DateX RsShell Uid SelChal;                            // the Select challenge, now stale
+IsamRx  = @ReaderB.Apdu("Isam Begin (stale challenge)", 90 48 00 RsKas[0] Body.Length Body 00);
+@Assert(IsamRx[¬1..] == SW_OK, "Begin OK?");
+MediaRx = @ReaderA.Apdu("Media Authenticate (stale challenge)", 90 10 00 00 (IsamRx.Length-2) IsamRx[..¬2] 08);
+@Test(MediaRx[¬1..] == SW_SEC, "Authenticate against the Select challenge after Reselects rejected");
+
+@PrintLn("============ Gate 3: no updates after a failed authentication");
+Expect = SW_SEC;  Ctx = 3;
+@Include ("UpdateGate.Inc");
+
+
+@PrintLn(" ************ B2: Authenticate against the last challenge **************");
+@ReaderA.Reset.cold;
+@ReaderB.Reset.cold;
+Rx = @ReaderB.Apdu("Isam Password", 90 18 00 00  10  @Itso.PwdI2F);
+@Assert(Rx[¬1..] == SW_OK, "Isam password OK?");
+
+RsFci = @ReaderA.Apdu("Media Select", CardSelect);
+@Assert(RsFci[¬1..] == SW_OK, "Select OK?");
+for (n = 1; n <= 3; n++) {
+    RsFci = @ReaderA.Apdu("Reselect " :: n, 9022 0000 00);
+    @Assert(RsFci[¬1..] == SW_OK, "Reselect OK?");
+}
+@Include ("FciParse.Inc");
+
+if (Pseudo == 1) { Uid = RsPUid; } else { Uid = RsSUid; }
+Body    = @Itso.DateX RsShell Uid RsChal;                             // the last Reselect challenge
+IsamRx  = @ReaderB.Apdu("Isam Begin (last challenge)", 90 48 00 RsKas[0] Body.Length Body 00);
+@Assert(IsamRx[¬1..] == SW_OK, "Begin OK?");
+MediaRx = @ReaderA.Apdu("Media Authenticate (last challenge)", 90 10 00 00 (IsamRx.Length-2) IsamRx[..¬2] 08);
+@Test(MediaRx[¬1..] == SW_OK, "Authenticate against the last Reselect challenge accepted");
+Rx      = @ReaderB.Apdu("Isam External Authenticate", 00 82 00 RsKas[1] (MediaRx.Length-2) MediaRx[..¬2]);
+@Test(Rx[¬1..] == SW_OK, "ISAM accepts the card's response");
+
+if (Pseudo == 1) {
+    @PrintLn("============ Gate 4: pseudo authentication alone permits no updates");
+    Expect = SW_SEC;  Ctx = 4;
+    @Include ("UpdateGate.Inc");
+
+    RsFci = @ReaderA.Apdu("Reselect (pseudo authenticated)", 9022 0000 00);
+    @Test(RsFci[¬1..] == SW_OK, "Reselect after the pseudo authentication OK");
+    @Include ("FciParse.Inc");
+    @Test(RsSUid.Length != 0, "Reselect after the pseudo authentication gives the static FCI");
+    Rx = @ReaderB.Apdu("Isam End (pseudo)", 90 58 00 00 00);
+    @Assert(Rx[¬1..] == SW_OK, "End OK?");
+
+    @PrintLn("============ Gate 5: still no updates after the pseudo Reselect");
+    Expect = SW_SEC;  Ctx = 5;
+    @Include ("UpdateGate.Inc");
+
+    @PrintLn("============ Full authentication against the static FCI");
+    Body    = @Itso.DateX RsShell RsSUid RsChal;
+    IsamRx  = @ReaderB.Apdu("Isam Begin (static)", 90 48 00 RsKas[0] Body.Length Body 00);
+    @Assert(IsamRx[¬1..] == SW_OK, "Begin OK?");
+    MediaRx = @ReaderA.Apdu("Media Authenticate (static)", 90 10 00 00 (IsamRx.Length-2) IsamRx[..¬2] 08);
+    @Test(MediaRx[¬1..] == SW_OK, "Full authentication accepted");
+    Rx      = @ReaderB.Apdu("Isam External Authenticate", 00 82 00 RsKas[1] (MediaRx.Length-2) MediaRx[..¬2]);
+    @Test(Rx[¬1..] == SW_OK, "ISAM accepts the card's response");
+}
+
+@PrintLn("============ Fully authenticated: Reselect refused");
+Rx = @ReaderA.Apdu("Reselect (fully authenticated)", 9022 0000 00);
+@Test(Rx[¬1..] == SW_SEC, "Reselect refused once fully authenticated");
+
+@PrintLn("============ Gate 6 (control): fully authenticated, updates get as far as the password check");
+Expect = SW_AUTH;  Ctx = 6;
+@Include ("UpdateGate.Inc");
+
+
+@PrintLn(" ************ C: Reselect during a session ****************************");
+@Include ("Authenticate.Inc");
+OrigDir = RaDir;
+@Debug(OrigDir);
+ShellE  = RaShell[18_d];
+
+for (Slot = 1; Slot < ShellE; Slot++) {                               // IPE entries are 1..E-1
+    Entry = RaDir[(2 + 5*(Slot-1))..(2 + 5*(Slot-1) + 4)];
+    if (Entry == 0000000000) {                                        // all zero = empty (Directory.E_Empty)
+        IpeNo = Slot;
+    }
+}
+@Assert(IpeNo != 0, "The directory needs an empty IPE entry");
+@PrintLn("Using slot #" :: IpeNo);
+Off    = 2 + 5*(IpeNo-1);
+OidOff = 2*(IpeNo-1);
+
+@PrintLn("============ CREATE_IPE + WDIR: get a signed directory and its password");
+Tx = IpeEntry IsamIpe;
+Rx = @ReaderB.Apdu("WSAM IPE", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 01 00);  // P1 = IPE# - 1
+@Assert(Rx[¬1..] == SW_OK, "CREATE_IPE");
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+
+NewDir = OrigDir[0..(Off-1)] IpeEntry OrigDir[(Off+5)..];
+Rx = @ReaderB.Apdu("WSAM Directory", 9040 0002 ((u8)(2 + NewDir.length)) ((u16)NewDir.length) NewDir);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("WDIR", 9056 0000 01 01 00);
+@Assert(Rx[¬1..] == SW_OK, "WDIR");
+DirPwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+SignedDir = Rx[..¬2];
+
+@PrintLn("============ Reselect in session: refused, session carries on");
+Tx = 9022 0000 00;
+Rx = @ReaderA.Apdu("Reselect (in session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_SEC, "Reselect in session refused");
+@Test(Rx.Length == 2, "Refused Reselect returns no FCI");
+
+Tx = 901E 0000 ((u8)(DirPwd.Length + SignedDir.Length)) DirPwd SignedDir;
+Rx = @ReaderA.Apdu("Update Dir (slot added)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Dir after a refused Reselect accepted: still authenticated");
+
+for (n = 1; n <= 4; n++) {
+    Tx = 9022 0000 00;
+    Rx = @ReaderA.Apdu("Reselect " :: n :: " (in session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_SEC, "Reselect " :: n :: " in session refused");
+}
+
+@Include ("Commit.Inc");                                              // the refused Reselects are in the hash
+
+
+@PrintLn(" ************ D: Reselect after End Session ***************************");
+RsFci = @ReaderA.Apdu("Reselect (session ended)", 9022 0000 00);
+@Test(RsFci[¬1..] == SW_OK, "Reselect after End Session OK");
+@Include ("FciParse.Inc");
+@Test(RsShell == RaShell,   "After End Session: shell as Select");
+@Test(RsDir   == SignedDir, "After End Session: directory as committed in C");
+@Test(RsSUid  == RaSUid,    "After End Session: UID as Select");
+@Test(RsKas   == RaKas,     "After End Session: KAS as Select");
+@Test(RsChal  != RaChal,    "After End Session: challenge is new");
+@Test(RsOid.Length == 2*(ShellE-1), "OID list has an entry for each of IPE 1..E-1");
+@Test(RsOid[OidOff..(OidOff+1)] == IpeOid, "OID list shows the OID of the new entry in slot #" :: IpeNo);
+
+Tx = 901E 0000 ((u8)(DirPwd.Length + OrigDir.Length)) DirPwd OrigDir;
+Rx = @ReaderA.Apdu("Update Dir (no session, real password)", Tx);
+@Test(Rx[¬1..] == SW_SEC, "Reselect did not restart the session: Update Dir rejected");
+
+@PrintLn("============ Gate 7: no updates after End Session and a Reselect");
+Expect = SW_SEC;  Ctx = 7;
+@Include ("UpdateGate.Inc");
+
+@PrintLn("============ New session from the Reselect challenge, no Select");
+Rx      = @ReaderB.Apdu("Isam End", 90 58 00 00 00);                 // close the ISAM's previous session first
+@Assert(Rx[¬1..] == SW_OK, "End OK?");
+Body    = @Itso.DateX RsShell RsSUid RsChal;
+IsamRx  = @ReaderB.Apdu("Isam Begin", 90 48 00 RsKas[0] Body.Length Body 00);
+@Assert(IsamRx[¬1..] == SW_OK, "Begin OK?");
+MediaRx = @ReaderA.Apdu("Media Authenticate", 90 10 00 00 (IsamRx.Length-2) IsamRx[..¬2] 08);
+@Test(MediaRx[¬1..] == SW_OK, "Authenticate against the Reselect challenge accepted");
+Rx      = @ReaderB.Apdu("Isam External Authenticate", 00 82 00 RsKas[1] (MediaRx.Length-2) MediaRx[..¬2]);
+@Test(Rx[¬1..] == SW_OK, "ISAM accepts the card's response");
+Rx      = @ReaderB.Apdu("WSAM Dir", 9040 0002 ((u8)(2 + RsDir.Length)) ((u16)RsDir.Length) RsDir);
+Rx      = @ReaderB.Apdu("VERIFY_ITSO", 904E 0000 00);
+@Assert(Rx[¬1..] == SW_OK, "Verify Directory");
+HashAcc = @Sha256.init;
+
+Tx = 901E 0000 ((u8)(DirPwd.Length + OrigDir.Length)) DirPwd OrigDir;
+Rx = @ReaderA.Apdu("Update Dir (original, new session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Dir in the new session accepted");
+@Include ("Commit.Inc");
+
+@Include ("Authenticate.Inc");
+@Test(RaDir == OrigDir, "Card ends with its original directory");

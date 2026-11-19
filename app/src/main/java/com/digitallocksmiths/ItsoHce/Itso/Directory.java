@@ -39,7 +39,7 @@ public class Directory {
 
     public short E_Oid(int i) {
         int iOffset = 2 + (i-1)* 5;
-        return (short) (((baDirectory[iOffset] << 8 | baDirectory[iOffset+1]) >> 2) & 0x1FFF);
+        return (short) (((((baDirectory[iOffset] & 0xFF) << 8) | (baDirectory[iOffset+1] & 0xFF)) >> 2) & 0x1FFF);
     }
 
     public boolean E_Empty(int i) {

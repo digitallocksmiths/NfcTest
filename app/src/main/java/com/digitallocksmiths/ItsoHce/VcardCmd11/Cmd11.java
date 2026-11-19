@@ -478,12 +478,12 @@ public class Cmd11 extends VCard {
 
     private byte[] ConstructOids() {                                                                // *** ConstructOids
         byte[] baOids = new byte[2 * (shell.getE()-1)];                                             //      make a list of the IPE owners.
-        for (int i = 1; i < shell.getE()-1; i++) {                                                  //      One enty for each E/possible IPE
+        for (int i = 1; i <= shell.getE()-1; i++) {                                                 //      One entry for each E/possible IPE (1..E-1)
             short sOid = 0;                                                                         //
             if (!directory.E_Empty(i)) {                                                            //      used?
                 sOid = directory.E_Oid(i);                                                          //      get the OID (13 bits from directory.E[i])
                 if (directory.E_Ext(i)) {                                                           //      Do we need to extend the OID by the ISAM fudge factor?
-                    int iOff = 2 + aIpe[i-1].baBody[0] & (byte)0xFC;                                //          Top bits are collected from the IPE's instance ID
+                    int iOff = 2 + (aIpe[i-1].baBody[0] & 0xFC);                                    //          Top bits are collected from the IPE's instance ID
                     switch (aIpe[i-1].baBody[iOff] & (byte)0x07) {                                  //          KID, ISAMID[4], (id-bits 18-16 are interesting)
                         case 4:                                                                     //                  100
                         case 5: sOid |= (short)0x2000; break;                                       //                  101 => +0x2000
@@ -556,13 +556,13 @@ public class Cmd11 extends VCard {
                     case INS_ReadIpe:                 DoReadIpe(apdu);        break;                //      supported
                     case INS_ReadVrg:                 DoReadVrg(apdu);        break;                //      ..
                     case INS_ReadLog:                 DoReadLog(apdu);        break;                //      ..
-                    case INS_Reselect:                DoReselect(apdu);       break;                //      ..
                     case INS_UpdateIpe:               DoUpdateIpe(apdu);      break;                //      ..
                     case INS_UpdateVrg:               DoUpdateVrg(apdu);      break;                //      ..
                     case INS_UpdateLog:               DoUpdateLog(apdu);      break;                //      ..
                     case INS_UpdateDir:               DoUpdateDir(apdu);      break;                //      ..
                     case INS_EndSession:              DoEndSession(apdu);     break;                //      ..
-                    case INS_Authenticate:
+                    case INS_Authenticate:                                                          //      not once fully authenticated
+                    case INS_Reselect:                                                              //      ..
                         ApduException.Throw(Apdu.SW.SECURITY_STATUS_NOT_SATISFIED);                 //
                     default:                                                                        //      all others
                         ApduException.Throw(Apdu.SW.INS_NOT_SUPPORTED);                             //          unrecognised
@@ -929,7 +929,6 @@ public class Cmd11 extends VCard {
     // ##########################################################################
     private void DoReselect(Apdu apdu) throws Apdu.ExitException, VCardIntegrityException {      // *** DoReselect
         byte[] baA5Material;
-        // ToDo: test for case ?
 
         if ((apdu.apduCase != Apdu.ApduCase.Two) || (!apdu.fAsMuchAsWeHave)) {                      // we want case 2 read all.
             ApduException.Throw(Apdu.SW.WRONG_LENGTH);			                                    //
