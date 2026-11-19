@@ -1,0 +1,342 @@
+// !TestName: HashMismatch
+//
+//  Tests that End Session only commits when the terminal's session hash
+//  is exactly the card's: every exchange since authentication (rejected
+//  ones too), command and response, in order, each once, and nothing else.
+//
+//  Each case is one session: a good IPE update (so a commit would show),
+//  then some traffic the script deliberately hashes wrongly. The ISAM
+//  signs the wrong hash; End Session must be rejected (6300), the session
+//  must be over, and the update must be discarded (HashReject.Inc).
+//
+//      1: a Read IPE left out of the hash
+//      2: a rejected Update IPE (wrong password, 6300) left out
+//      3: a rejected Read IPE (bad P1, 6A86) left out
+//      4: an unknown INS (6D00) left out
+//      5: a Read IPE's command hashed but not its response
+//      6: a Read IPE's response with one byte changed (as if altered on
+//         the way)
+//      7: two exchanges hashed in the wrong order
+//      8: one exchange hashed twice
+//      9: an exchange the card never saw added to the hash
+//     10: the Media Authenticate exchange itself added (the card's hash
+//         starts after it)
+//  Control: the same traffic hashed correctly commits, before and after
+//  the cases, so the cases fail for the hash alone.
+//
+//  Setup: Find an empty directory entry (IpeNo). CREATE_IPE + WDIR, add an
+//     entry for it, write IPE mark 00 and commit.
+//  End: write the original directory back and commit.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//                  Card to have at least one empty IPE entry in the directory.
+//                  The last empty one is used.
+//
+//  If the test stops part way, the directory may be left with the extra
+//  entry. The original is printed at the start (OrigDir).
+//
+
+// ---- Status words ---------------------------------------------------
+var SW_OK     = 9000;
+var SW_AUTH   = 6300;
+var SW_SEC    = 6982;
+var SW_P1P2   = 6A86;
+var SW_INS    = 6D00;
+
+// ---- Variables used by Authenticate.Inc, Commit.Inc & SessionSig.Inc ---
+var CardAid    = @Itso.Aid;
+var CardSelect = 00A40400 CardAid.Length CardAid;
+var HashAcc;
+var Hash;
+var Sig;
+var CmProof;
+var IsamProof;
+var RaResp;
+var RaFci;
+var Ra6F;
+var RaA5;
+var RaShell;
+var RaDir;
+var RaChal;
+var RaPUid;
+var RaSUid;
+var RaKas;
+var RaBody;
+var RaIsam;
+var RaMedia;
+
+var Tx;
+var Rx;
+
+// ---- Variables used by HashReject.Inc ----------------------------------
+var IpeBody  = 0102030405060708090A0B0C0D0E;                          // 14 bytes
+var SealTail = 5EA15EA15EA15EA15EA15EA15EA1;                         // 14 bytes. Seal = Mark Mark SealTail
+var Redacted = FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
+var Ipe;
+var Committed;
+var Pwd;
+var BadPwd   = FFFFFFFFFFFFFFFF;
+u8  Mark     = 0;
+u8  Case     = 0;
+
+// ---- Saved exchanges ---------------------------------------------------
+var Tx1;
+var Rx1;
+var Tx2;
+var Rx2;
+var Bent;                                                             // a response with one byte changed
+var AuthTx;                                                           // the Media Authenticate exchange
+var AuthRx;
+
+// ---- Directory handling -------------------------------------------
+var IpeEntry = 440440A3CA;                                            // type 2 IPE entry, as 06_ReadAndUpdate
+var IsamIpe  = 1801FF1003600065 03E80F9F01F307D0 8F14000200000000 1088080000000000;
+var OrigDir;
+var NewDir;
+var SignedDir;
+var DirPwd;
+var Entry;
+u8  ShellE   = 0;
+u8  IpeNo    = 0;
+u8  Slot     = 0;
+u8  Off      = 0;
+
+
+@PrintLn(" ************ Setup: pick an empty IPE entry ***************************");
+@Include ("Authenticate.Inc");
+OrigDir = RaDir;
+@Debug(OrigDir);
+ShellE  = RaShell[18_d];
+
+for (Slot = 1; Slot < ShellE; Slot++) {                               // IPE entries are 1..E-1
+    Entry = RaDir[(2 + 5*(Slot-1))..(2 + 5*(Slot-1) + 4)];
+    if (Entry == 0000000000) {                                        // all zero = empty (Directory.E_Empty)
+        IpeNo = Slot;
+    }
+}
+@Assert(IpeNo != 0, "The directory needs an empty IPE entry");
+@PrintLn("Using slot #" :: IpeNo);
+Off = 2 + 5*(IpeNo-1);
+
+Tx = IpeEntry IsamIpe;
+Rx = @ReaderB.Apdu("WSAM IPE", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 01 00);  // P1 = IPE# - 1
+@Assert(Rx[¬1..] == SW_OK, "CREATE_IPE");
+Pwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+
+NewDir = OrigDir[0..(Off-1)] IpeEntry OrigDir[(Off+5)..];             // with the entry of the IPE just created
+Rx = @ReaderB.Apdu("WSAM Directory", 9040 0002 ((u8)(2 + NewDir.length)) ((u16)NewDir.length) NewDir);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("WDIR", 9056 0000 01 01 00);
+@Assert(Rx[¬1..] == SW_OK, "WDIR");
+DirPwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+SignedDir = Rx[..¬2];
+
+Tx = 901E 0000 ((u8)(DirPwd.length + SignedDir.length)) DirPwd SignedDir;
+Rx = @ReaderA.Apdu("Update Dir", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Update Dir");
+
+Mark = 00;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark 00", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Update Ipe");
+@Include ("Commit.Inc");
+Committed = Ipe;
+
+
+@PrintLn(" ************ Control 1: all the traffic, hashed correctly *************");
+@Include ("Authenticate.Inc");
+Mark = C1;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark C1", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted");
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+Tx = 9018 IpeNo 00 ((u8)(BadPwd.Length + Ipe.Length)) BadPwd Ipe;
+Rx = @ReaderA.Apdu("Update Ipe (wrong password)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "Wrong password rejected");
+Tx = 9012 0000 00;
+Rx = @ReaderA.Apdu("Read Ipe P1 00", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Bad P1 rejected");
+Tx = 90EE 0000 00;
+Rx = @ReaderA.Apdu("INS EE", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_INS, "Unknown INS rejected");
+@Include ("Commit.Inc");
+Committed = Ipe;
+
+
+@PrintLn(" ************ 1: a Read IPE left out ***********************************");
+Case = 1;
+@Include ("Authenticate.Inc");
+Mark = 01;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark 01", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted");
+Rx = @ReaderA.Apdu("Read Ipe (not hashed)", 9012 IpeNo 00 00);
+@Include ("HashReject.Inc");
+
+
+@PrintLn(" ************ 2: a rejected Update IPE (wrong password) left out *******");
+Case = 2;
+@Include ("Authenticate.Inc");
+Mark = 02;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark 02", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted");
+Rx = @ReaderA.Apdu("Update Ipe, wrong password (not hashed)", 9018 IpeNo 00 ((u8)(BadPwd.Length + Ipe.Length)) BadPwd Ipe);
+@Test(Rx[¬1..] == SW_AUTH, "Wrong password rejected");
+@Include ("HashReject.Inc");
+
+
+@PrintLn(" ************ 3: a rejected Read IPE (bad P1) left out *****************");
+Case = 3;
+@Include ("Authenticate.Inc");
+Mark = 03;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark 03", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted");
+Rx = @ReaderA.Apdu("Read Ipe P1 00 (not hashed)", 9012 0000 00);
+@Test(Rx[¬1..] == SW_P1P2, "Bad P1 rejected");
+@Include ("HashReject.Inc");
+
+
+@PrintLn(" ************ 4: an unknown INS left out *******************************");
+Case = 4;
+@Include ("Authenticate.Inc");
+Mark = 04;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark 04", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted");
+Rx = @ReaderA.Apdu("INS EE (not hashed)", 90EE 0000 00);
+@Test(Rx[¬1..] == SW_INS, "Unknown INS rejected");
+@Include ("HashReject.Inc");
+
+
+@PrintLn(" ************ 5: a command hashed without its response ****************");
+Case = 5;
+@Include ("Authenticate.Inc");
+Mark = 05;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark 05", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted");
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe (response not hashed)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);
+@Include ("HashReject.Inc");
+
+
+@PrintLn(" ************ 6: a response with one byte changed ********************");
+Case = 6;
+@Include ("Authenticate.Inc");
+Mark = 06;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark 06", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted");
+Tx   = 9012 IpeNo 00 00;
+Rx   = @ReaderA.Apdu("Read Ipe (response bent)", Tx);
+Bent = Rx[0..5] 77 Rx[7..];                                           // byte 6 (the mark) replaced
+if (Bent == Rx) { Bent = Rx[0..5] 78 Rx[7..]; }
+HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Bent);
+@Include ("HashReject.Inc");
+
+
+@PrintLn(" ************ 7: two exchanges hashed in the wrong order **************");
+Case = 7;
+@Include ("Authenticate.Inc");
+Mark = 07;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx1  = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx1  = @ReaderA.Apdu("Update Ipe, mark 07", Tx1);
+@Test(Rx1[¬1..] == SW_OK, "Update Ipe accepted");
+Tx2  = 9016 0100 00;
+Rx2  = @ReaderA.Apdu("Read Log", Tx2);
+HashAcc = @Sha256.Update(HashAcc, Tx2);  HashAcc = @Sha256.Update(HashAcc, Rx2);   // second first
+HashAcc = @Sha256.Update(HashAcc, Tx1);  HashAcc = @Sha256.Update(HashAcc, Rx1);
+@Include ("HashReject.Inc");
+
+
+@PrintLn(" ************ 8: one exchange hashed twice ****************************");
+Case = 8;
+@Include ("Authenticate.Inc");
+Mark = 08;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark 08", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted");
+Tx = 9016 0100 00;
+Rx = @ReaderA.Apdu("Read Log (hashed twice)", Tx);
+HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Include ("HashReject.Inc");
+
+
+@PrintLn(" ************ 9: an exchange the card never saw ***********************");
+Case = 9;
+@Include ("Authenticate.Inc");
+Mark = 09;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark 09", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted");
+HashAcc = @Sha256.Update(HashAcc, 9016 0100 00);                      // never sent
+HashAcc = @Sha256.Update(HashAcc, 9000);
+@Include ("HashReject.Inc");
+
+
+@PrintLn(" ************ 10: the Media Authenticate exchange added ****************");
+Case = 0A;                                                            // ten
+@Include ("Authenticate.Inc");
+AuthTx  = 9010 0000 ((u8)(RaIsam.Length-2)) RaIsam[..¬2] 08;          // what Authenticate.Inc sent last,
+AuthRx  = RaMedia;                                                    //   and what came back
+HashAcc = @Sha256.Update(HashAcc, AuthTx);  HashAcc = @Sha256.Update(HashAcc, AuthRx);
+Mark = 10;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark 10", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted");
+@Include ("HashReject.Inc");
+
+
+@PrintLn(" ************ Control 2: hashed correctly again, after all the cases ***");
+//  The session from the end of case 10 is still open.
+Mark = C2;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark C2", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted");
+Tx = 9016 0100 00;
+Rx = @ReaderA.Apdu("Read Log", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Include ("Commit.Inc");
+Committed = Ipe;
+@Include ("Authenticate.Inc");
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == Committed, "Control 2 committed: the card still commits a correct hash");
+
+
+@PrintLn(" ************ End: restore the original directory **********************");
+@Print("Original : " :: OrigDir);
+Tx = 901E 0000 ((u8)(DirPwd.length + OrigDir.length)) DirPwd OrigDir;
+Rx = @ReaderA.Apdu("Update Dir (restore)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Restore directory accepted");
+@Include ("Commit.Inc");
+
+@Include ("Authenticate.Inc");
+@Test(RaDir == OrigDir, "Original directory restored");
