@@ -1,0 +1,356 @@
+// !TestName: UpdateIpe
+//
+//  Tests what Update IPE (9018 P1 00 Lc pwd[8] IPE) accepts and rejects,
+//  and that a rejected update changes nothing and leaves the session
+//  running. (ISO case checks are in 07_CommandStructure; overwrites, every
+//  feasible size and commit/discard are in 08_IpeUpdateCommit.)
+//
+//  IPE layout:  [size byte][body][seal 16], size = size byte & FC, counting
+//  the size byte itself, so Lc = 8 + size + 16.
+//      P1 = IPE number 1..E-1, P2 = 00, otherwise 6A86.
+//      Lc must match the size byte, otherwise 6700.
+//      The password must be the slot's own, otherwise 6300.
+//
+//  Setup: Find an empty directory entry (IpeNo). CREATE_IPE, WDIR, add an
+//     entry for it, write a base IPE and a fixed VRG (FixedVrg), commit.
+//     Read every other slot (Snapshot).
+//  A: In one session, all with an otherwise good update:
+//       A1: P1 = 00 and every P1 from E to FF: 6A86.
+//           Every P2 from 01 to FF: 6A86.
+//       A2: Size byte 20 (Lc 38): every other Lc 01..FF: 6700.
+//       A3: The size byte's low 2 bits are not part of the size: size bytes
+//           21, 22, 23 and E7 are accepted with the Lc of sizes 20 and E4,
+//           and the first byte reads back exactly as written.
+//       A4: Size bytes 00..03 (size 0, smaller than the size byte itself)
+//           with Lc 18: 6700.
+//       A5: Wrong password (all FF; last byte changed; the password of
+//           another slot): 6300.
+//       After every rejection the IPE reads back unchanged. At the end the
+//       slot's VRG and every other slot are unchanged. Commit: the session
+//       survived every rejection (all exchanges are in the hash).
+//  B: After commit and reset: the last accepted IPE, size byte included,
+//     and the fixed VRG.
+//  C: Write the original directory back and commit; every other slot still
+//     reads as it did at the start.
+//
+//  Size bytes E8..FF (sizes over E4) need Lc over FF, which a short APDU
+//  can't carry, so they are not tried here.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//                  Card to have at least one empty IPE entry in the directory,
+//                  and E of at least 3 (another slot for the password test).
+//                  The last empty one is used.
+//
+//  If the test stops part way, the directory may be left with the extra
+//  entry. The original is printed at the start (OrigDir).
+//
+
+// ---- Status words ---------------------------------------------------
+var SW_OK     = 9000;
+var SW_AUTH   = 6300;
+var SW_LEN    = 6700;
+var SW_P1P2   = 6A86;
+var SW_NOREC  = 6A83;
+
+// ---- Variables used by Authenticate.Inc & Commit.Inc -------------------
+var CardAid    = @Itso.Aid;
+var CardSelect = 00A40400 CardAid.Length CardAid;
+var HashAcc;
+var Hash;
+var Sig;
+var CmProof;
+var IsamProof;
+var RaResp;
+var RaFci;
+var Ra6F;
+var RaA5;
+var RaShell;
+var RaDir;
+var RaChal;
+var RaPUid;
+var RaSUid;
+var RaKas;
+var RaBody;
+var RaIsam;
+var RaMedia;
+
+var Tx;
+var Rx;
+
+// ---- Test IPE construction -----------------------------------------
+var SealTail = 5EA15EA15EA15EA15EA15EA15EA1;                         // 14 bytes. Seal = Mark SizeByte SealTail
+var Mark     = A1;
+var Ipe;                                                              // the IPE being written
+var Good;                                                             // the IPE last accepted
+var Pwd;                                                              // sector password for IPE #IpeNo
+var BadPwd   = FFFFFFFFFFFFFFFF;
+var NearPwd;                                                          // Pwd with its last byte changed
+var OtherPwd;                                                         // the password of another slot
+var FixedVrg;
+var Tmp;
+var Filler   = FF;                                                    // 100 bytes of FF
+u8  SB       = 0;                                                     // size byte
+u8  Sz       = 0;                                                     // size (SB & FC)
+u8  Lc       = 0;
+u8  LegalLc  = 0;
+u8  k        = 0;
+u8  P        = 0;
+
+var Pattern  = 00;                                                    // 00 01 02 ... FF: body filler
+u8  Pb       = 0;
+for (Pb = 1; Pb < 255_d; Pb++) {
+    Pattern = Pattern Pb;
+}
+Pattern = Pattern FF;
+for (Pb = 1; Pb < FF; Pb++) {
+    Filler = Filler FF;
+}
+Filler = Filler FF;
+
+// ---- Directory handling -------------------------------------------
+var IpeEntry = 440440A3CA;                                            // type 2 IPE entry, as 06_ReadAndUpdate
+var IsamIpe  = 1801FF1003600065 03E80F9F01F307D0 8F14000200000000 1088080000000000;
+var OrigDir;
+var NewDir;
+var SignedDir;
+var DirPwd;
+var Entry;
+var Snapshot;
+var Snap2;
+u8  ShellE   = 0;
+u8  IpeNo    = 0;
+u8  OtherNo  = 0;                                                     // another slot, for the password test
+u8  Slot     = 0;
+u8  Off      = 0;
+
+
+@PrintLn(" ************ Setup: pick an empty IPE entry ***************************");
+@Include ("Authenticate.Inc");
+OrigDir = RaDir;
+@Debug(OrigDir);
+ShellE  = RaShell[18_d];
+@Assert(ShellE >= 3, "E must be at least 3: two IPE slots are needed");
+
+for (Slot = 1; Slot < ShellE; Slot++) {                               // IPE entries are 1..E-1
+    Entry = RaDir[(2 + 5*(Slot-1))..(2 + 5*(Slot-1) + 4)];
+    if (Entry == 0000000000) {                                        // all zero = empty (Directory.E_Empty)
+        IpeNo = Slot;
+    }
+}
+@Assert(IpeNo != 0, "The directory needs an empty IPE entry");
+if (IpeNo == 1) { OtherNo = 2; } else { OtherNo = IpeNo - 1; }
+@PrintLn("Using slot #" :: IpeNo :: ", and slot #" :: OtherNo :: " for the wrong slot password");
+Off = 2 + 5*(IpeNo-1);
+
+Snapshot = 00;
+for (Slot = 1; Slot < ShellE; Slot++) {
+    if (Slot != IpeNo) {
+        Tx = 9012 Slot 00 00;
+        Rx = @ReaderA.Apdu("Read Ipe #" :: Slot :: " (snapshot)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        Snapshot = Snapshot Slot Rx;
+    }
+}
+
+@PrintLn("============ Passwords for slot #" :: IpeNo :: " and slot #" :: OtherNo);
+Tx = IpeEntry IsamIpe;
+Rx = @ReaderB.Apdu("WSAM IPE", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 01 00);  // P1 = IPE# - 1
+@Assert(Rx[¬1..] == SW_OK, "CREATE_IPE");
+Pwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+NearPwd = Pwd[0..6] Pwd[0];                                           // last byte replaced
+if (NearPwd == Pwd) { NearPwd = Pwd[0..6] Pwd[1]; }
+
+NewDir = OrigDir[0..(Off-1)] IpeEntry OrigDir[(Off+5)..];             // WDIR straight after the one CREATE_IPE it
+Rx = @ReaderB.Apdu("WSAM Directory", 9040 0002 ((u8)(2 + NewDir.length)) ((u16)NewDir.length) NewDir);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");                                   //   goes with: it fails after a second one
+Rx = @ReaderB.Apdu("WDIR", 9056 0000 01 01 00);
+@Assert(Rx[¬1..] == SW_OK, "WDIR");
+DirPwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+SignedDir = Rx[..¬2];
+
+Tx = IpeEntry IsamIpe;                                                // only the password is wanted: nothing is
+Rx = @ReaderB.Apdu("WSAM IPE", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");                                   //   written to slot OtherNo
+Rx = @ReaderB.Apdu("CREATE_IPE (other slot)", 9052 ((u8)(OtherNo-1)) 00 01 01 00);
+if (Rx[¬1..] == SW_OK) {
+    OtherPwd = Rx[2..9];
+    Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+    Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+}
+else {
+    @PrintLn("The ISAM won't CREATE_IPE on slot #" :: OtherNo :: " (occupied): the other slot password test is skipped");
+    OtherPwd = 00;
+}
+
+Tx = 901E 0000 ((u8)(DirPwd.length + SignedDir.length)) DirPwd SignedDir;
+Rx = @ReaderA.Apdu("Update Dir", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Update Dir");
+
+SB   = 20;
+Ipe  = SB Pattern[0..1E] Mark SB SealTail;                            // size 20: 1 + 31 body + 16 seal
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe (base)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Update Ipe");
+Good = Ipe;
+
+FixedVrg = 28 Pattern[0..26] EE 28 SealTail;                         // size 28, Mark EE: never written again
+Tx = 901A IpeNo 00 ((u8)(Pwd.Length + FixedVrg.Length)) Pwd FixedVrg;
+Rx = @ReaderA.Apdu("Update Vrg (fixed)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Update Vrg");
+@Include ("Commit.Inc");
+
+
+@PrintLn(" ************ A: Rejections, in one session ****************************");
+@Include ("Authenticate.Inc");
+Mark = A1;
+SB   = 20;
+Ipe  = SB Pattern[0..1E] Mark SB SealTail;                            // a good update, Lc 38
+LegalLc = Pwd.Length + Ipe.Length;
+
+@PrintLn("============ A1: Illegal P1 (00, E..FF) and P2 (01..FF)");
+Tx = 9018 00 00 LegalLc Pwd Ipe;
+Rx = @ReaderA.Apdu("Update Ipe P1 00", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "P1 00 rejected");
+for (k = 0; k < FF; k++) {                                            // P1 01..FF. Counting k, so the u8 never wraps
+    P = 1 + k;
+    if (P >= ShellE) {
+        Tx = 9018 P 00 LegalLc Pwd Ipe;
+        Rx = @ReaderA.Apdu("Update Ipe P1 " :: P, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        @Test(Rx[¬1..] == SW_P1P2, "P1 " :: P :: " (beyond E-1) rejected");
+    }
+}
+for (k = 0; k < FF; k++) {                                            // P2 01..FF
+    P = 1 + k;
+    Tx = 9018 IpeNo P LegalLc Pwd Ipe;
+    Rx = @ReaderA.Apdu("Update Ipe P2 " :: P, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_P1P2, "P2 " :: P :: " rejected");
+}
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == Good, "A1: IPE unchanged by the rejected P1/P2");
+
+@PrintLn("============ A2: Size byte 20, every Lc but 38");
+Tmp = Pwd Ipe Filler;                                                 // long enough for Lc = FF
+for (k = 0; k < FF; k++) {                                            // Lc 01..FF
+    Lc = 1 + k;
+    if (Lc != LegalLc) {
+        Tx = 9018 IpeNo 00 Lc Tmp[0..(Lc-1)];
+        Rx = @ReaderA.Apdu("Update Ipe Lc " :: Lc, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        @Test(Rx[¬1..] == SW_LEN, "Size byte 20 with Lc " :: Lc :: " rejected");
+    }
+}
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == Good, "A2: IPE unchanged by the wrong lengths");
+
+@PrintLn("============ A3: The size byte's low 2 bits are kept, not counted");
+for (SB = 21; SB <= 23; SB++) {
+    Mark = SB;
+    Ipe  = SB Pattern[0..1E] Mark SB SealTail;                        // still size 20
+    Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+    Rx   = @ReaderA.Apdu("Update Ipe, size byte " :: SB, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_OK, "Size byte " :: SB :: " (size 20) accepted");
+    Tx = 9012 IpeNo 00 00;
+    Rx = @ReaderA.Apdu("Read Ipe", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[5..¬2] == Ipe, "Size byte " :: SB :: ": reads back exactly as written");
+    Good = Ipe;
+}
+SB   = E7;
+Mark = E7;
+Ipe  = SB Pattern[0..E2] Mark SB SealTail;                            // size E4, the largest: Lc FC
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, size byte E7", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Size byte E7 (size E4, Lc FC) accepted");
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == Ipe, "Size byte E7: reads back exactly as written");
+Good = Ipe;
+
+@PrintLn("============ A4: Size 0 (size bytes 00..03)");
+for (SB = 0; SB <= 3; SB++) {
+    Ipe = SB A4 SealTail;                                             // 16 bytes: what size 0 + seal adds up to, so Lc 18 matches
+    Tx  = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+    Rx  = @ReaderA.Apdu("Update Ipe, size byte " :: SB, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_LEN, "Size byte " :: SB :: " (size 0, less than the size byte itself) rejected");
+}
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == Good, "A4: IPE unchanged by the size 0 updates");
+
+@PrintLn("============ A5: Wrong passwords");
+SB   = 20;
+Mark = A5;
+Ipe  = SB Pattern[0..1E] Mark SB SealTail;
+Tx = 9018 IpeNo 00 LegalLc BadPwd Ipe;
+Rx = @ReaderA.Apdu("Update Ipe, password all FF", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "Password all FF rejected");
+Tx = 9018 IpeNo 00 LegalLc NearPwd Ipe;
+Rx = @ReaderA.Apdu("Update Ipe, password last byte changed", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "Password with only its last byte wrong rejected");
+if (OtherPwd.Length == 8) {
+    Tx = 9018 IpeNo 00 LegalLc OtherPwd Ipe;
+    Rx = @ReaderA.Apdu("Update Ipe, slot #" :: OtherNo :: "'s password", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_AUTH, "Another slot's password rejected");
+}
+Tx = 9018 OtherNo 00 LegalLc Pwd Ipe;
+Rx = @ReaderA.Apdu("Update Ipe #" :: OtherNo :: " with slot #" :: IpeNo :: "'s password", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "This slot's password rejected on another slot");
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == Good, "A5: IPE unchanged by the wrong passwords");
+
+@PrintLn("============ The rest of the card is untouched");
+Tx = 9014 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Vrg #" :: IpeNo, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == FixedVrg, "The slot's VRG is untouched");
+Snap2 = 00;
+for (Slot = 1; Slot < ShellE; Slot++) {
+    if (Slot != IpeNo) {
+        Tx = 9012 Slot 00 00;
+        Rx = @ReaderA.Apdu("Read Ipe #" :: Slot, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        Snap2 = Snap2 Slot Rx;
+    }
+}
+@Test(Snap2 == Snapshot, "Every other slot is untouched");
+
+@Include ("Commit.Inc");                                              // every rejected exchange is in the hash
+
+
+@PrintLn(" ************ B: After commit ******************************************");
+@Include ("Authenticate.Inc");
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe #" :: IpeNo, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == Good, "The last accepted IPE (size byte E7) was committed");
+Tx = 9014 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Vrg #" :: IpeNo, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == FixedVrg, "The slot's VRG is still the fixed one");
+
+
+@PrintLn(" ************ C: Restore the original directory ***********************");
+@Print("Original : " :: OrigDir);
+Tx = 901E 0000 ((u8)(DirPwd.length + OrigDir.length)) DirPwd OrigDir;
+Rx = @ReaderA.Apdu("Update Dir (restore)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Restore directory accepted");
+@Include ("Commit.Inc");
+
+@Include ("Authenticate.Inc");
+@Test(RaDir == OrigDir, "Original directory restored");
+Snap2 = 00;
+for (Slot = 1; Slot < ShellE; Slot++) {
+    if (Slot != IpeNo) {
+        Tx = 9012 Slot 00 00;
+        Rx = @ReaderA.Apdu("Read Ipe #" :: Slot :: " (at the end)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        Snap2 = Snap2 Slot Rx;
+    }
+}
+@Test(Snap2 == Snapshot, "Every other IPE slot reads exactly as it did at the start");

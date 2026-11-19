@@ -1000,6 +1000,7 @@ public class Cmd11 extends VCard {
         if ((apdu.apduCase != Apdu.ApduCase.Three) ||                                               // we want case 3 write with no read
             (apdu.Lc <= iPASSWORD_SIZE) ||                                                          // should be big enough to hold length at least
             (iLen != (iPASSWORD_SIZE +(apdu.baRxData[iPASSWORD_SIZE] & 0xFC) + 16)) ||              // length should be pwd::ipe::seal
+            ((apdu.baRxData[iPASSWORD_SIZE] & 0xFC) < 4) ||                                         // at least 4: the size includes the size byte itself
             ((apdu.baRxData[iPASSWORD_SIZE] & 0xFC) > iIPE_MAXSIZE) ) {                             // and <= limit to fit in an APDU
             ApduException.Throw(Apdu.SW.WRONG_LENGTH);											    //
         }                                                                                           //
