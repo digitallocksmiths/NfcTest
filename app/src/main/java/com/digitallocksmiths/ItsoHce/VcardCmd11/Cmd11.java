@@ -1128,29 +1128,35 @@ public class Cmd11 extends VCard {
 
         sfAuthenticated = sbool.False;                                                              // Always terminate the SM now this has been called.
 
-        if ((apdu.apduCase != Apdu.ApduCase.Four) || (apdu.Lc != iCSS_SIZE)) {                      // we want case 4 && Check Len = sig size.
-            ApduException.Throw(Apdu.SW.WRONG_LENGTH);                                              //
-        }                                                                                           //
+        byte[] baSig;
+        try {                                                                                       // Any failure from here on ends the session uncommitted,
+            if ((apdu.apduCase != Apdu.ApduCase.Four) || (apdu.Lc != iCSS_SIZE)) {                  // we want case 4 && Check Len = sig size.
+                ApduException.Throw(Apdu.SW.WRONG_LENGTH);                                          //
+            }                                                                                       //
 
-        if ((apdu.P1 != 0) || (apdu.P2 != 0)) {                                                     //  P1 & P2 should = 0
-            ApduException.Throw(Apdu.SW.INCORRECT_P1P2);                                            //
+            if ((apdu.P1 != 0) || (apdu.P2 != 0)) {                                                 //  P1 & P2 should = 0
+                ApduException.Throw(Apdu.SW.INCORRECT_P1P2);                                        //
+            }
+            if (apdu.Lc != iCSS_SIZE) {                                                             // Check Len = sig size.
+                ApduException.Throw(Apdu.SW.WRONG_LENGTH);                                          //
+            }                                                                                       //
+
+            byte[] baMac = Hash.digest();                                                           // This is our Hash of the earlier APDUs
+
+            if ((baMac.length % 8) != 0) {                                                          // Padded if the MAC is not block of 8
+                baMac = Arrays.copyOfRange(baMac, 0, ((baMac.length + 7) / 8) * 8);                 //
+            }                                                                                       //
+
+            Sig.init(Cipher.ENCRYPT_MODE, SessionKey, new IvParameterSpec(new byte[8]));            // We do Sig as a DES MAC
+            baSig = Sig.doFinal(baMac);                                                             // Calculate the MAC. it's the last block here
+            if (!BytesMatch(apdu.baRxData, 0, baSig, baSig.length - 8, 8)) {                        // Check we agree with the caller.
+                ApduException.Throw(Apdu.SW.AUTHENTICATION_FAILURE);                                //      Not happy!
+            }                                                                                       //
         }
-        if (apdu.Lc != iCSS_SIZE) {                                                                 // Check Len = sig size.
-            ApduException.Throw(Apdu.SW.WRONG_LENGTH);                                              //
-        }                                                                                           //
-
-        byte[] baMac = Hash.digest();		                                                        // This is our Hash of the earlier APDUs
-
-        if ((baMac.length % 8) != 0) {                                                              // Padded if the MAC is not block of 8
-            baMac = Arrays.copyOfRange(baMac, 0, ((baMac.length + 7) / 8) * 8);                     //
-        }                                                                                           //
-
-        Sig.init(Cipher.ENCRYPT_MODE, SessionKey, new IvParameterSpec(new byte[8]));                // We do Sig as a DES MAC
-        byte[] baSig = Sig.doFinal(baMac);                                                          // Calculate the MAC. it's the last block here
-        if (!BytesMatch(apdu.baRxData, 0, baSig, baSig.length - 8, 8)) {                            // Check we agree with the caller.
-            ImageReload();                                                                         //      Drop all changes.
-            ApduException.Throw(Apdu.SW.AUTHENTICATION_FAILURE);                                    //      Not happy!
-        }                                                                                           //
+        catch (Exception e) {                                                                       // ... so drop all the session's changes
+            ImageReload();                                                                          //      reload the committed image
+            throw e;                                                                                //      and report the failure.
+        }
 
         Sig.init(Cipher.ENCRYPT_MODE, SessionKey, new IvParameterSpec(new byte[8]));                //
         baCSS = Sig.doFinal(baSig, baSig.length - iCSS_SIZE, iCSS_SIZE);                            // CSS response = enc(TS)

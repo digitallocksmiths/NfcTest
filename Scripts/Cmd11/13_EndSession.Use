@@ -1,0 +1,290 @@
+// !TestName: EndSession
+//
+//  Tests End Session (9020 0000 08 sig 00): what it commits, what it
+//  returns, and what happens to the session and its updates when it is
+//  rejected. (P1/P2 and ISO case checks are also in 07_CommandStructure;
+//  End Session before authentication is in 12_Reselect, gate 1.)
+//
+//  End Session takes the session MAC (8 bytes) the ISAM makes from the
+//  hash of every exchange since authentication. When it matches, the
+//  card commits the session's updates and returns its Commit Confirmation
+//  Signature (CSS), which the ISAM can check, and which later appears in
+//  the Select FCI (tag C4). Any End Session that reaches the card ends
+//  the session.
+//
+//  The data written is a test IPE in an empty slot (as 08_IpeUpdateCommit),
+//  marked with a Mark byte so each version can be told apart.
+//
+//  Setup: Find an empty directory entry (IpeNo). CREATE_IPE + WDIR, add an
+//     entry for it, write IPE mark 00 and commit.
+//  A: 3 sessions, each writing a new IPE and committing: the CSS matches
+//     the ISAM's, appears in the next Select FCI, and differs every time.
+//     Then a session with no updates: it commits too, with a new CSS.
+//  B: B1: after a good End Session, the same End Session again is refused
+//         (6982): there is no session any more.
+//     B2: a new session can't be committed with the previous session's
+//         (genuine) signature: 6300, and its update is discarded.
+//  C: End Session with the real signature but one thing wrong (EndReject.Inc):
+//       P1 = 01 (6A86), P2 = 01 (6A86), Lc = 07 (6700), case 3 (6700),
+//       bad MAC (6300).
+//     Each must end the session (later updates and the correct End Session
+//     are refused 6982) and discard the update, both before and after a
+//     reset.
+//  D: A malformed End Session (Lc does not match the data, 6F00) never
+//     reaches End Session: the session carries on, the exchange is in the
+//     hash, and a correct End Session then commits the update.
+//  E: Write the original directory back and commit.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//                  Card to have at least one empty IPE entry in the directory.
+//                  The last empty one is used.
+//
+//  If the test stops part way, the directory may be left with the extra
+//  entry. The original is printed at the start (OrigDir).
+//
+
+// ---- Status words ---------------------------------------------------
+var SW_OK      = 9000;
+var SW_AUTH    = 6300;
+var SW_SEC     = 6982;
+var SW_P1P2    = 6A86;
+var SW_LEN     = 6700;
+var SW_UNKNOWN = 6F00;
+
+// ---- Variables used by Authenticate.Inc, Commit.Inc & SessionSig.Inc ---
+var CardAid    = @Itso.Aid;
+var CardSelect = 00A40400 CardAid.Length CardAid;
+var HashAcc;
+var Hash;
+var Sig;
+var CmProof;
+var IsamProof;
+var RaResp;
+var RaFci;
+var Ra6F;
+var RaA5;
+var RaShell;
+var RaDir;
+var RaChal;
+var RaPUid;
+var RaSUid;
+var RaKas;
+var RaBody;
+var RaIsam;
+var RaMedia;
+
+var Tx;
+var Rx;
+
+// ---- Variables used by EndReject.Inc -----------------------------------
+var EndTx;
+var Expect;
+u8  EndKind  = 0;
+var Ipe;
+var IpeBody  = 0102030405060708090A0B0C0D0E;                          // 14 bytes
+var SealTail = 5EA15EA15EA15EA15EA15EA15EA1;                         // 14 bytes. Seal = Mark Mark SealTail
+var Redacted = FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;                      // 16 bytes. Seal as seen before authentication
+var Committed;                                                        // the IPE last committed
+var Pwd;                                                              // sector password for IPE #IpeNo
+u8  Mark     = 0;
+
+// ---- CSS ---------------------------------------------------------------
+var Css;                                                              // the CSS in the Select FCI
+var PrevProof;
+var OldSig;
+var T6F;
+var TA5;
+
+// ---- Directory handling -------------------------------------------
+var IpeEntry = 440440A3CA;                                            // type 2 IPE entry, as 06_ReadAndUpdate
+var IsamIpe  = 1801FF1003600065 03E80F9F01F307D0 8F14000200000000 1088080000000000;
+var OrigDir;
+var NewDir;
+var SignedDir;
+var DirPwd;
+var Entry;
+u8  ShellE   = 0;
+u8  IpeNo    = 0;
+u8  Slot     = 0;
+u8  Off      = 0;
+u8  n        = 0;
+
+
+@PrintLn(" ************ Setup: pick an empty IPE entry ***************************");
+@Include ("Authenticate.Inc");
+OrigDir = RaDir;
+@Debug(OrigDir);
+ShellE  = RaShell[18_d];
+
+for (Slot = 1; Slot < ShellE; Slot++) {                               // IPE entries are 1..E-1
+    Entry = RaDir[(2 + 5*(Slot-1))..(2 + 5*(Slot-1) + 4)];
+    if (Entry == 0000000000) {                                        // all zero = empty (Directory.E_Empty)
+        IpeNo = Slot;
+    }
+}
+@Assert(IpeNo != 0, "The directory needs an empty IPE entry");
+@PrintLn("Using slot #" :: IpeNo);
+Off = 2 + 5*(IpeNo-1);
+
+Tx = IpeEntry IsamIpe;
+Rx = @ReaderB.Apdu("WSAM IPE", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 01 00);  // P1 = IPE# - 1
+@Assert(Rx[¬1..] == SW_OK, "CREATE_IPE");
+Pwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+
+NewDir = OrigDir[0..(Off-1)] IpeEntry OrigDir[(Off+5)..];
+Rx = @ReaderB.Apdu("WSAM Directory", 9040 0002 ((u8)(2 + NewDir.length)) ((u16)NewDir.length) NewDir);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("WDIR", 9056 0000 01 01 00);
+@Assert(Rx[¬1..] == SW_OK, "WDIR");
+DirPwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+SignedDir = Rx[..¬2];
+
+Tx = 901E 0000 ((u8)(DirPwd.length + SignedDir.length)) DirPwd SignedDir;
+Rx = @ReaderA.Apdu("Update Dir", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Update Dir");
+
+Mark = 00;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark 00", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Update Ipe");
+
+@Include ("Commit.Inc");
+Committed = Ipe;
+PrevProof = CmProof;
+
+
+@PrintLn(" ************ A: Good commits and their CSS ****************************");
+for (n = 1; n <= 4; n++) {
+    @PrintLn("============ Session A" :: n);
+    @Include ("Authenticate.Inc");
+    Tx = 9012 IpeNo 00 00;
+    Rx = @ReaderA.Apdu("Read Ipe #" :: IpeNo, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[5..¬2] == Committed, "Session A" :: n :: ": last committed IPE read back");
+
+    if (n != 4) {                                                     // A4 has no updates
+        Mark = A0 + n;
+        Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+        Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+        Rx   = @ReaderA.Apdu("Update Ipe, mark " :: Mark, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        @Test(Rx[¬1..] == SW_OK, "Update Ipe accepted, mark " :: Mark);
+    }
+    else {
+        @PrintLn("No updates in this session: End Session must still commit");
+    }
+
+    @Include ("Commit.Inc");                                          // tests the CSS against the ISAM's
+    @Test(CmProof.Length == 8, "Session A" :: n :: ": CSS is 8 bytes");
+    @Test(CmProof != PrevProof, "Session A" :: n :: ": CSS differs from the last session's");
+    PrevProof = CmProof;
+    if (n != 4) {
+        Committed = Ipe;
+    }
+
+    @ReaderA.Reset.cold;                                              // the CSS is in the Select FCI
+    Rx  = @ReaderA.Apdu("Media Select (CSS)", CardSelect);
+    @Assert(Rx[¬1..] == SW_OK, "Select OK?");
+    T6F = @Tlv(6F, Rx);
+    TA5 = @Tlv(A5, T6F);
+    Css = @Tlv(C4, TA5);
+    @Test(Css == CmProof, "Session A" :: n :: ": the Select FCI carries the CSS End Session returned");
+}
+
+
+@PrintLn(" ************ B1: End Session twice ***********************************");
+@Include ("Authenticate.Inc");
+Mark = B1;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark B1", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted, mark B1");
+@Include ("Commit.Inc");
+Committed = Ipe;
+OldSig    = Sig;
+
+Rx = @ReaderA.Apdu("End Session (again)", 9020 0000 08 Sig 00);
+@Test(Rx[¬1..] == SW_SEC, "A second End Session is refused: the session is over");
+
+
+@PrintLn(" ************ B2: End Session with the previous session's signature ****");
+@Include ("Authenticate.Inc");
+Mark = B2;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark B2", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted, mark B2");
+
+Rx = @ReaderA.Apdu("End Session (replayed signature)", 9020 0000 08 OldSig 00);
+@Test(Rx[¬1..] == SW_AUTH, "The previous session's signature is rejected");
+
+Rx = @ReaderA.Apdu("Read Ipe #" :: IpeNo :: " (not authenticated)", 9012 IpeNo 00 00);
+@Test(Rx[5..¬2] == Committed[..¬16_d] Redacted, "Replayed signature: update not visible before a reset, previous IPE read back");
+@Include ("Authenticate.Inc");
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe #" :: IpeNo, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == Committed, "Replayed signature: update gone after a reset, previous IPE read back");
+
+
+@PrintLn(" ************ C: Rejected End Session ends the session ****************");
+@PrintLn("============ C1: P1 = 01");
+Mark = C1;  EndKind = 1;  Expect = SW_P1P2;
+@Include ("EndReject.Inc");
+
+@PrintLn("============ C2: P2 = 01");
+Mark = C2;  EndKind = 2;  Expect = SW_P1P2;
+@Include ("EndReject.Inc");
+
+@PrintLn("============ C3: Lc = 07");
+Mark = C3;  EndKind = 3;  Expect = SW_LEN;
+@Include ("EndReject.Inc");
+
+@PrintLn("============ C4: case 3 (no Le)");
+Mark = C4;  EndKind = 4;  Expect = SW_LEN;
+@Include ("EndReject.Inc");
+
+@PrintLn("============ C5: bad MAC");
+Mark = C5;  EndKind = 5;  Expect = SW_AUTH;
+@Include ("EndReject.Inc");
+
+
+@PrintLn(" ************ D: Malformed End Session does not end the session ********");
+//  The session from the end of C5 is still open.
+Mark = D1;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark D1", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted, mark D1");
+
+Tx = 9020 0000 08 0000000000000000 0000 00;                           // Lc 08, but 10 bytes of data
+Rx = @ReaderA.Apdu("End Session (malformed)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_UNKNOWN, "Malformed End Session rejected (6F00)");
+
+@Include ("Commit.Inc");                                              // the malformed exchange is in the hash
+Committed = Ipe;
+
+@Include ("Authenticate.Inc");
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe #" :: IpeNo, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == Committed, "Session survived the malformed End Session: its update was committed");
+
+
+@PrintLn(" ************ E: Restore the original directory ***********************");
+@Print("Original : " :: OrigDir);
+Tx = 901E 0000 ((u8)(DirPwd.length + OrigDir.length)) DirPwd OrigDir;
+Rx = @ReaderA.Apdu("Update Dir (restore)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Restore directory accepted");
+@Include ("Commit.Inc");
+
+@Include ("Authenticate.Inc");
+@Test(RaDir == OrigDir, "Original directory restored");
