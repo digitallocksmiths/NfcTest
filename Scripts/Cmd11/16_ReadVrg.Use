@@ -1,0 +1,303 @@
+// !TestName: ReadVrg
+//
+//  Tests Read VRG (9014 P1 00 00): which slots it will read, what it
+//  returns, and how that depends on authentication and on the directory.
+//  (ISO case checks are in 07_CommandStructure.)
+//
+//  Response:  [directory entry 5][VRG: size byte, body][seal 16] 9000
+//      size  = first VRG byte & FC, counting the size byte itself
+//      seal  = the real seal when fully authenticated, otherwise all FF
+//  P1 = IPE (slot) number 1..E-1, P2 = 00, otherwise 6A86.
+//  An empty directory entry (all 00) gives 6A83.
+//
+//  Setup: Find an empty directory entry (IpeNo). CREATE_IPE, WDIR, add an
+//     entry for it, write a test VRG and a fixed IPE (FixedIpe) and commit.
+//     Read every other slot's VRG (Snapshot) to check at the end that
+//     nothing else changed. The fixed IPE is checked after B and in D:
+//     VRG writes and reads must leave the slot's IPE alone.
+//  A: Not authenticated:
+//       every slot 1..E-1: 9000 if its entry is occupied, 6A83 if not, and
+//       an occupied slot returns its own directory entry and a redacted seal;
+//       P1 = 00 and every P1 from E to FF: 6A86;
+//       every P2 from 01 to FF: 6A86.
+//  B: Fully authenticated, one session: write every feasible size (04..E4)
+//     and read each back at once: entry, VRG and real seal, exactly the
+//     size written. Commit.
+//  C: After commit, not authenticated: the largest VRG (E4: 249 bytes of
+//     response data) and, after another session, the smallest (04) read
+//     back with the body intact and the seal redacted.
+//  D: The entry returned is the directory's: with the slot's entry removed
+//     (in session) the read gives 6A83, and the VRG is back when the entry
+//     is restored.
+//  E: Write the original directory back and commit. The slot reads 6A83,
+//     and every other slot still reads as it did at the start.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//                  Card to have at least one empty IPE entry in the directory.
+//                  The last empty one is used.
+//
+//  If the test stops part way, the directory may be left with the extra
+//  entry. The original is printed at the start (OrigDir).
+//
+
+// ---- Status words ---------------------------------------------------
+var SW_OK     = 9000;
+var SW_P1P2   = 6A86;
+var SW_NOREC  = 6A83;
+
+// ---- Variables used by Authenticate.Inc & Commit.Inc -------------------
+var CardAid    = @Itso.Aid;
+var CardSelect = 00A40400 CardAid.Length CardAid;
+var HashAcc;
+var Hash;
+var Sig;
+var CmProof;
+var IsamProof;
+var RaResp;
+var RaFci;
+var Ra6F;
+var RaA5;
+var RaShell;
+var RaDir;
+var RaChal;
+var RaPUid;
+var RaSUid;
+var RaKas;
+var RaBody;
+var RaIsam;
+var RaMedia;
+
+var Tx;
+var Rx;
+
+// ---- Test VRG construction -----------------------------------------
+var SealTail = 5EA15EA15EA15EA15EA15EA15EA1;                         // 14 bytes. Seal = Mark Size SealTail
+var Redacted = FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;                      // 16 bytes. Seal as seen before authentication
+var Mark     = A1;
+var Vrg;
+var Pwd;                                                              // sector password for IPE #IpeNo
+var FixedIpe;                                                         // the slot's IPE: VRG reads and writes must not touch it
+u8  Size     = 0;
+
+var Pattern  = 00;                                                    // 00 01 02 ... FF: body filler
+u8  Pb       = 0;
+for (Pb = 1; Pb < 255_d; Pb++) {
+    Pattern = Pattern Pb;
+}
+Pattern = Pattern FF;
+
+// ---- Directory handling -------------------------------------------
+var IpeEntry = 440440A3CA;                                            // type 2 IPE entry, as 06_ReadAndUpdate
+var IsamIpe  = 1801FF1003600065 03E80F9F01F307D0 8F14000200000000 1088080000000000;
+var OrigDir;
+var NewDir;
+var SignedDir;
+var DirPwd;
+var Entry;
+var Snapshot;                                                         // reads of every other slot, at the start
+var Snap2;                                                            // ... and at the end
+u8  ShellE   = 0;
+u8  IpeNo    = 0;
+u8  Slot     = 0;
+u8  Off      = 0;
+u8  k        = 0;
+u8  P        = 0;
+
+
+@PrintLn(" ************ Setup: pick an empty IPE entry ***************************");
+@Include ("Authenticate.Inc");
+OrigDir = RaDir;
+@Debug(OrigDir);
+ShellE  = RaShell[18_d];
+
+for (Slot = 1; Slot < ShellE; Slot++) {                               // IPE entries are 1..E-1
+    Entry = RaDir[(2 + 5*(Slot-1))..(2 + 5*(Slot-1) + 4)];
+    if (Entry == 0000000000) {                                        // all zero = empty (Directory.E_Empty)
+        IpeNo = Slot;
+    }
+}
+@Assert(IpeNo != 0, "The directory needs an empty IPE entry");
+@PrintLn("Using slot #" :: IpeNo);
+Off = 2 + 5*(IpeNo-1);
+
+Snapshot = 00;
+for (Slot = 1; Slot < ShellE; Slot++) {
+    if (Slot != IpeNo) {
+        Tx = 9014 Slot 00 00;
+        Rx = @ReaderA.Apdu("Read Vrg #" :: Slot :: " (snapshot)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        Snapshot = Snapshot Slot Rx;
+    }
+}
+
+Tx = IpeEntry IsamIpe;
+Rx = @ReaderB.Apdu("WSAM IPE", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 01 00);  // P1 = IPE# - 1
+@Assert(Rx[¬1..] == SW_OK, "CREATE_IPE");
+Pwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+
+NewDir = OrigDir[0..(Off-1)] IpeEntry OrigDir[(Off+5)..];
+Rx = @ReaderB.Apdu("WSAM Directory", 9040 0002 ((u8)(2 + NewDir.length)) ((u16)NewDir.length) NewDir);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("WDIR", 9056 0000 01 01 00);
+@Assert(Rx[¬1..] == SW_OK, "WDIR");
+DirPwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+SignedDir = Rx[..¬2];
+
+Tx = 901E 0000 ((u8)(DirPwd.length + SignedDir.length)) DirPwd SignedDir;
+Rx = @ReaderA.Apdu("Update Dir", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Update Dir");
+
+Size = 40;
+Vrg  = Size Pattern[0..(Size-2)] Mark Size SealTail;
+Tx   = 901A IpeNo 00 ((u8)(Pwd.Length + Vrg.Length)) Pwd Vrg;
+Rx   = @ReaderA.Apdu("Update Vrg (setup)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Update Vrg");
+
+FixedIpe = 28 Pattern[0..26] EE 28 SealTail;                         // size 28, Mark EE: never written again
+Tx = 9018 IpeNo 00 ((u8)(Pwd.Length + FixedIpe.Length)) Pwd FixedIpe;
+Rx = @ReaderA.Apdu("Update Ipe (fixed)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Update Ipe");
+@Include ("Commit.Inc");
+
+
+@PrintLn(" ************ A: Not authenticated ***********************************");
+@Include ("Authenticate.Inc");                                        // to get the committed directory ...
+@ReaderA.Reset.cold;                                                  // ... then drop the session
+Rx = @ReaderA.Apdu("Media Select", CardSelect);
+@Assert(Rx[¬1..] == SW_OK, "Select OK?");
+
+@PrintLn("============ Every slot 1..E-1");
+for (Slot = 1; Slot < ShellE; Slot++) {
+    Entry = RaDir[(2 + 5*(Slot-1))..(2 + 5*(Slot-1) + 4)];
+    Rx    = @ReaderA.Apdu("Read Vrg #" :: Slot, 9014 Slot 00 00);
+    if (Entry == 0000000000) {
+        @Test(Rx[¬1..] == SW_NOREC, "Slot #" :: Slot :: " empty: 6A83");
+    }
+    else {
+        @Test(Rx[¬1..] == SW_OK, "Slot #" :: Slot :: " occupied: 9000");
+        @Test(Rx[0..4] == Entry, "Slot #" :: Slot :: ": returns its own directory entry");
+        @Test(Rx[¬17_d..¬2] == Redacted, "Slot #" :: Slot :: ": seal redacted");
+    }
+}
+Rx = @ReaderA.Apdu("Read Vrg #" :: IpeNo, 9014 IpeNo 00 00);
+@Test(Rx[5..¬2] == Vrg[..¬16_d] Redacted, "Test slot: committed VRG body read back, seal redacted");
+
+@PrintLn("============ Illegal P1: 00 and E..FF");
+Rx = @ReaderA.Apdu("Read Vrg P1 00", 9014 0000 00);
+@Test(Rx[¬1..] == SW_P1P2, "P1 00 rejected");
+for (k = 0; k < FF; k++) {                                            // P1 01..FF. Counting k, so the u8 never wraps
+    P = 1 + k;
+    if (P >= ShellE) {
+        Rx = @ReaderA.Apdu("Read Vrg P1 " :: P, 9014 P 00 00);
+        @Test(Rx[¬1..] == SW_P1P2, "P1 " :: P :: " (beyond E-1) rejected");
+    }
+}
+
+@PrintLn("============ Illegal P2: 01..FF");
+for (k = 0; k < FF; k++) {
+    P = 1 + k;
+    Rx = @ReaderA.Apdu("Read Vrg P2 " :: P, 9014 IpeNo P 00);
+    @Test(Rx[¬1..] == SW_P1P2, "P2 " :: P :: " rejected");
+}
+
+
+@PrintLn(" ************ B: Authenticated: every size, read at once ****************");
+@Include ("Authenticate.Inc");
+Mark = B1;
+for (Size = 4; Size <= 228_d; Size += 4) {
+    Vrg = Size Pattern[0..(Size-2)] Mark Size SealTail;
+    Tx  = 901A IpeNo 00 ((u8)(Pwd.Length + Vrg.Length)) Pwd Vrg;
+    Rx  = @ReaderA.Apdu("Update Vrg, size " :: Size, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_OK, "Update accepted, size " :: Size);
+
+    Tx = 9014 IpeNo 00 00;
+    Rx = @ReaderA.Apdu("Read Vrg, size " :: Size, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_OK, "Read OK, size " :: Size);
+    @Test(Rx[0..4] == IpeEntry, "Size " :: Size :: ": entry as in the directory");
+    @Test(Rx[5..¬2] == Vrg, "Size " :: Size :: ": VRG and real seal read back, exactly the size written");
+}
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe #" :: IpeNo :: " (after the VRG sizes)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == FixedIpe, "The slot's IPE is untouched by the VRG writes");
+@Include ("Commit.Inc");                                              // largest written last: E4
+
+
+@PrintLn(" ************ C: Committed sizes read without authentication **********");
+@ReaderA.Reset.cold;
+Rx = @ReaderA.Apdu("Media Select", CardSelect);
+@Assert(Rx[¬1..] == SW_OK, "Select OK?");
+Rx = @ReaderA.Apdu("Read Vrg (E4, not authenticated)", 9014 IpeNo 00 00);
+@Test(Rx[¬1..] == SW_OK, "Read OK");
+@Test(Rx.Length == 249_d + 2, "Largest VRG: 249 bytes of response data");
+@Test(Rx[5..¬2] == Vrg[..¬16_d] Redacted, "Largest VRG: body intact, seal redacted");
+
+@Include ("Authenticate.Inc");
+Mark = C1;
+Size = 4;
+Vrg  = Size Pattern[0..(Size-2)] Mark Size SealTail;
+Tx   = 901A IpeNo 00 ((u8)(Pwd.Length + Vrg.Length)) Pwd Vrg;
+Rx   = @ReaderA.Apdu("Update Vrg, size 04", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update accepted, size 04");
+@Include ("Commit.Inc");
+
+@ReaderA.Reset.cold;
+Rx = @ReaderA.Apdu("Media Select", CardSelect);
+@Assert(Rx[¬1..] == SW_OK, "Select OK?");
+Rx = @ReaderA.Apdu("Read Vrg (04, not authenticated)", 9014 IpeNo 00 00);
+@Test(Rx[¬1..] == SW_OK, "Read OK");
+@Test(Rx.Length == 25_d + 2, "Smallest VRG: 25 bytes of response data");
+@Test(Rx[5..¬2] == Vrg[..¬16_d] Redacted, "Smallest VRG: body intact, seal redacted");
+
+
+@PrintLn(" ************ D: The directory decides ********************************");
+@Include ("Authenticate.Inc");
+Tx = 901E 0000 ((u8)(DirPwd.length + OrigDir.length)) DirPwd OrigDir;
+Rx = @ReaderA.Apdu("Update Dir (entry removed)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Dir accepted");
+Tx = 9014 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Vrg (entry removed)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_NOREC, "Entry removed: 6A83 although the VRG data is still there");
+
+Tx = 901E 0000 ((u8)(DirPwd.length + SignedDir.length)) DirPwd SignedDir;
+Rx = @ReaderA.Apdu("Update Dir (entry back)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Dir accepted");
+Tx = 9014 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Vrg (entry back)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == Vrg, "Entry back: the VRG reads again");
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe #" :: IpeNo :: " (entry back)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == FixedIpe, "Entry back: the slot's IPE is still the fixed one");
+
+
+@PrintLn(" ************ E: Restore the original directory ***********************");
+@Print("Original : " :: OrigDir);
+Tx = 901E 0000 ((u8)(DirPwd.length + OrigDir.length)) DirPwd OrigDir;
+Rx = @ReaderA.Apdu("Update Dir (restore)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Restore directory accepted");
+@Include ("Commit.Inc");
+
+@Include ("Authenticate.Inc");
+@Test(RaDir == OrigDir, "Original directory restored");
+Tx = 9014 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Vrg #" :: IpeNo :: " (empty again)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_NOREC, "Slot #" :: IpeNo :: " is empty again");
+
+Snap2 = 00;
+for (Slot = 1; Slot < ShellE; Slot++) {
+    if (Slot != IpeNo) {
+        Tx = 9014 Slot 00 00;
+        Rx = @ReaderA.Apdu("Read Vrg #" :: Slot :: " (at the end)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        Snap2 = Snap2 Slot Rx;
+    }
+}
+@Test(Snap2 == Snapshot, "Every other slot's VRG reads exactly as it did at the start");
