@@ -1069,6 +1069,7 @@ public class Cmd11 extends VCard {
         }                                                                                           //
         UpdateCheckPassword(apdu, iIpeNo);                                                          // Password Happy ?
         System.arraycopy(TTLog.baBody, 0, TTLog.baBody, 0x30, TTLog.baBody.length - 0x30);          // Shuffle old records 0..4 to new 1..5
+        Arrays.fill(TTLog.baBody, 0, 0x30, (byte) 0);                                               // Clear record #0 so a short record is padded with zeros
         UpdateStoreAndExit(apdu, TTLog.baBody, iDataLen);                                           // Squeeze in the new record at #0 &  hash exit Happy exception.
     }
 

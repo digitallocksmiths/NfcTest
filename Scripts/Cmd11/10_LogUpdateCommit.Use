@@ -1,0 +1,293 @@
+// !TestName: LogUpdateCommit
+//
+//  Tests the data written by Update Log (901C), the FIFO behaviour of the
+//  log and when updates are committed.
+//
+//  The log is a FIFO of the last 5 records, each 30 bytes (48 decimal).
+//      Update Log data = password[8] :: record[1..30], P1 = P2 = 00.
+//      The new record goes in at the head (#1), the others move down one,
+//      and the oldest (#5) drops out.
+//      Read Log (9016 nn 00 00) returns the newest nn records (1..5),
+//      30 bytes each. It does not need authentication and is not redacted.
+//      The log password is the sector password for slot E.
+//
+//  A short record (Len < 30) is padded with 00 up to 30 bytes: bytes
+//  Len..2F of the new head must be 00, with nothing left of the record it
+//  replaced. To make leftovers show, every test record's padding area is
+//  checked after it follows a record that was longer and non-zero there.
+//  (Section A writes lengths going up and then going down, so each short
+//  record lands on top of a longer one.)
+//
+//  Setup: CREATE_IPE on slot E (as 06_ReadAndUpdate) to get the log
+//     password. Read the 5 records as found (OrigLog).
+//  A: In one session, write every record length 1..30 going up, then
+//     2F..1 going down, and after each write read all 5 records back: the
+//     new record must be at the head, padded with 00 to 30 bytes, and the
+//     previous records each one place further down.
+//     Also: every illegal length (Lc 01..08 and 39..FF) and a wrong
+//     password are rejected and leave the log alone. Commit, reset, read back.
+//  B: 7 sessions, one record each, committed: after each reset the log
+//     must hold the newest 5 committed records in order, so records drop
+//     off the end once more than 5 have been written.
+//  C: Updates that are not committed must not be kept, and the previously
+//     committed records must be read back in their place:
+//       C1: write 2 records, then reset without End Session.
+//       C2: write 2 records, then End Session with a bad signature (6300).
+//           Also checks the old records, not the abandoned ones, are read
+//           back before the reset.
+//  D: Write the original 5 records back, oldest first, and commit.
+//
+//  Each test record starts with a Mark byte (A1/D1/B1..B7/C1/C2) and its
+//  length, then the pattern 01 02 03 ... No byte of a test record is 00,
+//  so any leftover data in the padding is always seen.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//
+//  If the test stops part way, the log is left with test records. The
+//  original is printed at the start (OrigLog).
+//
+
+// ---- Status words ---------------------------------------------------
+var SW_OK     = 9000;
+var SW_AUTH   = 6300;
+var SW_LEN    = 6700;
+
+// ---- Variables used by Authenticate.Inc, Commit.Inc & LogUpdate.Inc ---
+var CardAid    = @Itso.Aid;
+var CardSelect = 00A40400 CardAid.Length CardAid;
+var HashAcc;
+var Hash;
+var Sig;
+var CmProof;
+var IsamProof;
+var RaResp;
+var RaFci;
+var Ra6F;
+var RaA5;
+var RaShell;
+var RaDir;
+var RaChal;
+var RaPUid;
+var RaSUid;
+var RaKas;
+var RaBody;
+var RaIsam;
+var RaMedia;
+
+var Tx;
+var Rx;
+
+var LogPwd;                                                           // sector password for the log (slot E)
+var Rec;                                                              // the record being written
+u8  Len      = 0;                                                     // its length, 1..30
+var Model;                                                            // expected 5 records (F0 bytes), newest first
+
+// ---- Test record construction -----------------------------------------
+var OrigLog;                                                          // the 5 records as found, restored in D
+var Committed;                                                        // Model as at the last commit
+var Tmp;
+var BadPwd   = FFFFFFFFFFFFFFFF;
+u8  Mark     = A1;
+u8  n        = 0;
+u8  k        = 0;
+u8  Lc       = 0;
+
+var Pattern  = 01;                                                    // 01 02 03 ... 40: record filler, never 00
+u8  Pb       = 0;
+for (Pb = 2; Pb <= 40; Pb++) {
+    Pattern = Pattern Pb;
+}
+
+var Zeros    = 00;                                                    // 30 bytes of 00: the padding of a short record
+for (Pb = 1; Pb < 30; Pb++) {
+    Zeros = Zeros 00;
+}
+
+// ---- Log creation, as 06_ReadAndUpdate --------------------------------
+var LogE_Orphan = 7F80000000;                                         // Orphan entry for the seal
+var IsamLog     = 1C0400FCC7A29E80009B0000CA000D5222000001CA000D522200000000FF000000000000;
+u8  ShellE      = 0;
+
+
+@PrintLn(" ************ Setup: get the log password *****************************");
+@Include ("Authenticate.Inc");
+ShellE = RaShell[18_d];
+
+Tx = LogE_Orphan IsamLog;
+Rx = @ReaderB.Apdu("WSAM LOG", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("CREATE_IPE (log)", 9052 ((u8)(ShellE-1)) 00 01 01 00);  // P1 = E - 1
+@Assert(Rx[¬1..] == SW_OK, "CREATE_IPE");
+LogPwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+
+Tx = 9016 0500 00;
+Rx = @ReaderA.Apdu("Read 5 Log (as found)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Read Log");
+OrigLog = Rx[..¬2];
+@Debug(OrigLog);
+Model   = OrigLog;
+
+
+@PrintLn(" ************ A: Every record length in one session ********************");
+@PrintLn("============ Every length going up");
+Mark  = A1;
+for (Len = 1; Len <= 30; Len++) {
+    Tmp = Mark Len Pattern;
+    Rec = Tmp[0..(Len-1)];
+    @Include ("LogUpdate.Inc");
+
+    Tx = 9016 0500 00;
+    Rx = @ReaderA.Apdu("Read 5 Log", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_OK, "Read Log OK");
+    @Test(Rx[0..(Len-1)] == Rec, "New record (length " :: Len :: ") is at the head");
+    if (Len < 30) {
+        @Test(Rx[Len..2F] == Zeros[Len..2F], "New record (length " :: Len :: ") padded with 00, nothing left of the record it replaced");
+    }
+    @Test(Rx[30..EF] == Model[30..EF], "Older records moved down one place (length " :: Len :: ")");
+    @Test(Rx[..¬2] == Model, "Full log image as expected (length " :: Len :: ")");
+}
+
+@PrintLn("============ Every length going down: each lands on a longer record");
+Mark  = D1;
+for (Len = 2F; Len >= 1; Len--) {
+    Tmp = Mark Len Pattern;
+    Rec = Tmp[0..(Len-1)];
+    @Include ("LogUpdate.Inc");
+
+    Tx = 9016 0500 00;
+    Rx = @ReaderA.Apdu("Read 5 Log", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_OK, "Read Log OK");
+    @Test(Rx[0..(Len-1)] == Rec, "New record (length " :: Len :: ") is at the head");
+    @Test(Rx[Len..2F] == Zeros[Len..2F], "New record (length " :: Len :: ") padded with 00, nothing left of the record it replaced");
+    @Test(Rx[30..EF] == Model[30..EF], "Older records moved down one place (length " :: Len :: ")");
+    @Test(Rx[..¬2] == Model, "Full log image as expected (length " :: Len :: ")");
+}
+
+@PrintLn("============ Rejected updates leave the log alone");
+//  Every illegal Lc: 01..07 (not even a whole password), 08 (password,
+//  no record) and 39..FF (record longer than 30). The data is the real
+//  password followed by filler, cut to Lc bytes, so only the length is
+//  wrong. Lc = 00 is not a case 3 APDU, so it is not tried here.
+Tmp = LogPwd Pattern Pattern Pattern Pattern;                         // 8 + 100 bytes, enough for Lc = FF
+
+for (k = 0; k < 8; k++) {                                             // Lc 01..08
+    Lc = 1 + k;
+    Tx = 901C 0000 Lc Tmp[0..(Lc-1)];
+    Rx = @ReaderA.Apdu("Update Log, Lc " :: Lc, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_LEN, "Update Log with Lc " :: Lc :: " (record too short) rejected");
+}
+
+for (k = 0; k <= C6; k++) {                                           // Lc 39..FF. Counting k, not Lc, so the u8 never wraps
+    Lc = 39 + k;
+    Tx = 901C 0000 Lc Tmp[0..(Lc-1)];
+    Rx = @ReaderA.Apdu("Update Log, Lc " :: Lc, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_LEN, "Update Log with Lc " :: Lc :: " (record too long) rejected");
+}
+
+Tmp = Pattern[0..2F];
+Tx  = 901C 0000 ((u8)(BadPwd.Length + Tmp.Length)) BadPwd Tmp;
+Rx  = @ReaderA.Apdu("Update Log, wrong password", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "Update Log with a wrong password rejected");
+
+Tx = 9016 0500 00;
+Rx = @ReaderA.Apdu("Read 5 Log", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[..¬2] == Model, "Log unchanged by the rejected updates");
+
+@Include ("Commit.Inc");
+Committed = Model;
+
+@Include ("Authenticate.Inc");
+Tx = 9016 0500 00;
+Rx = @ReaderA.Apdu("Read 5 Log (after commit)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[..¬2] == Committed, "Session A committed: the last 5 records read back after a reset");
+
+
+@PrintLn(" ************ B: One record per session, 7 sessions ********************");
+for (n = 1; n <= 7; n++) {
+    @PrintLn("============ Session B" :: n);
+    if (n != 1) {
+        @Include ("Authenticate.Inc");
+    }
+    Mark = B0 + n;
+    Len  = 7 * n - 1;                                                 // 6, D, 14, 1B, 22, 29, 30
+    Tmp  = Mark Len Pattern;
+    Rec  = Tmp[0..(Len-1)];
+    @Include ("LogUpdate.Inc");
+    @Include ("Commit.Inc");
+    Committed = Model;
+
+    @Include ("Authenticate.Inc");
+    Tx = 9016 0500 00;
+    Rx = @ReaderA.Apdu("Read 5 Log", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[0..(Len-1)] == Rec, "Record B" :: n :: " is at the head after a reset");
+    @Test(Rx[..¬2] == Committed, "Log holds the newest 5 committed records, newest first (after B" :: n :: ")");
+}
+@PrintLn("============ Only B3..B7 are left");
+for (n = 1; n <= 5; n++) {
+    @Test(Rx[(30*(n-1))] == B8 - n, "Record #" :: n :: " is from session B" :: (8 - n));
+}
+
+
+@PrintLn(" ************ C1: Updates without End Session are discarded ************");
+Mark  = C1;
+for (n = 1; n <= 2; n++) {
+    Len = 30;
+    Tmp = Mark Len Pattern;
+    Rec = Tmp[0..(Len-1)];
+    @Include ("LogUpdate.Inc");
+}
+
+@PrintLn("Reset without End Session");
+@Include ("Authenticate.Inc");
+Model = Committed;
+
+Tx = 9016 0500 00;
+Rx = @ReaderA.Apdu("Read 5 Log", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[..¬2] == Committed, "Updates not committed (no End Session) were discarded: previous records read back");
+
+
+@PrintLn(" ************ C2: Updates with a failed End Session are discarded ******");
+Mark  = C2;
+for (n = 1; n <= 2; n++) {
+    Len = 30;
+    Tmp = Mark Len Pattern;
+    Rec = Tmp[0..(Len-1)];
+    @Include ("LogUpdate.Inc");
+}
+
+Rx = @ReaderA.Apdu("End Session (bad signature)", 9020 0000 08 0000000000000000 00);
+@Test(Rx[¬1..] == SW_AUTH, "End Session with a bad signature rejected");
+Model = Committed;
+
+@PrintLn("Session over but no reset yet: the abandoned records must not be visible, the old ones must be");
+Rx = @ReaderA.Apdu("Read 5 Log (not authenticated)", 9016 0500 00);
+@Test(Rx[¬1..] == SW_OK, "Read Log OK");
+@Test(Rx[..¬2] == Committed, "Abandoned updates not visible after a failed End Session: previous records read back");
+
+@Include ("Authenticate.Inc");
+
+Tx = 9016 0500 00;
+Rx = @ReaderA.Apdu("Read 5 Log", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[..¬2] == Committed, "Updates discarded after a failed End Session and a reset: previous records read back");
+
+
+@PrintLn(" ************ D: Restore the original log ******************************");
+@Print("Original : " :: OrigLog);
+
+Mark  = 00;                                                           // no Mark in restored records: 00 just labels the messages
+Len   = 30;
+for (n = 5; n >= 1; n--) {                                            // oldest first, so #1 ends up at the head
+    Rec = OrigLog[(30*(n-1))..(30*n - 1)];
+    @Include ("LogUpdate.Inc");
+}
+@Include ("Commit.Inc");
+
+@Include ("Authenticate.Inc");
+Tx = 9016 0500 00;
+Rx = @ReaderA.Apdu("Read 5 Log (restored)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[..¬2] == OrigLog, "Original log restored");
