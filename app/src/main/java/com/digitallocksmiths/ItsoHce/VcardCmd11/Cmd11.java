@@ -622,23 +622,29 @@ public class Cmd11 extends VCard {
 
         byte[] baResponse;                                                                          // response to the challenge's response.
         try {
-            if      (shell.getKsc() == 0x03) { baResponse = DoAuthenticateKsc03(apdu); }            // CMD2 style authenticate. (Exception on failure)
-            else if (shell.getKsc() == 0x04) { baResponse = DoAuthenticateKsc04(apdu); }            // Desfire style authentication
-            else {                                                                                  // Anything else is problematic.
-                Log.e(TAG, "DoAuthenticate: KSC is not 0x03 or 0x04.");                             //
-                throw new VCardIntegrityException("DoAuthenticate: KSC is not 0x03 or 0x04.");      //
+            try {
+                if      (shell.getKsc() == 0x03) { baResponse = DoAuthenticateKsc03(apdu); }        // CMD2 style authenticate. (Exception on failure)
+                else if (shell.getKsc() == 0x04) { baResponse = DoAuthenticateKsc04(apdu); }        // Desfire style authentication
+                else {                                                                              // Anything else is problematic.
+                    Log.e(TAG, "DoAuthenticate: KSC is not 0x03 or 0x04.");                         //
+                    throw new VCardIntegrityException("DoAuthenticate: KSC is not 0x03 or 0x04.");  //
+                }                                                                                   //
+                ApduException.Throw(baResponse, Apdu.SW.NO_ERROR);									// Exit Happy.
+            }
+            catch (AuthenticationException e) {                                                     // Session key crypto failures end here.
+                ApduException.Throw(Apdu.SW.SECURITY_STATUS_NOT_SATISFIED);                         //      Not happy response
             }                                                                                       //
-            ApduException.Throw(baResponse, Apdu.SW.NO_ERROR);										// Exit Happy.
+            catch (Apdu.ExitException e) {                                                          // SW error responses will be rethrown
+                throw e;                                                                            //
+            }                                                                                       //
+            catch (Exception e) {                                                                   // All other exceptions end here.
+                Log.d(TAG, "DoAuthenticate: " + e.getMessage());                                    //       Leave a clue about what went wrong!
+                ApduException.Throw(Apdu.SW.UNKNOWN);                                               //
+            }
         }
-        catch (AuthenticationException e) {                                                         // Session key crypto failures end here.
-            ApduException.Throw(Apdu.SW.SECURITY_STATUS_NOT_SATISFIED);                             //      Not happy response
-        }                                                                                           //
-        catch (Apdu.ExitException e) {                                                              // SW error responses will be rethrown
-            throw e;                                                                                //
-        }                                                                                           //
-        catch (Exception e) {                                                                       // All other exceptions end here.
-            Log.d(TAG, "DoAuthenticate: " + e.getMessage());                                        //       Leave a clue about what went wrong!
-            ApduException.Throw(Apdu.SW.UNKNOWN);                                                   //
+        finally {                                                                                   // A challenge may be answered only once, right or wrong:
+            Rng.nextBytes(baChallenge);                                                             //      replace it with one nobody has seen,
+            Arrays.fill(baChallengeTemp, (byte)0);                                                  //      so retries and replays need a new Select/Reselect.
         }
     }
 
@@ -753,7 +759,8 @@ public class Cmd11 extends VCard {
                 baRotRnd[i] ^= apdu.baRxData[i];                                                                //
             }                                                                                                   //
 
-            if (! BytesMatch(baRotRnd, 0, baChallenge, 1, iCHALLENGE_SIZE -1)) {                                // 7 out of 8 is good enough!
+            if ((! BytesMatch(baRotRnd, 0, baChallenge, 1, iCHALLENGE_SIZE -1)) ||                              // Expecting RndB rotated left one byte: b1..b7
+                (! BytesMatch(baRotRnd, iCHALLENGE_SIZE -1, baChallenge, 0, 1))) {                              //                                         b0. All 8 must match.
                 throw new AuthenticationException();                                                            // 		Exit Mr Grumpy.
             }                                                                                                   //
 

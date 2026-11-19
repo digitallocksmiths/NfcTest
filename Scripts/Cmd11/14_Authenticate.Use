@@ -1,0 +1,271 @@
+// !TestName: Authenticate
+//
+//  Tests Media Authenticate (9010 0000 10 data 08): which challenge it
+//  answers, that a challenge can be used only once, what it unlocks, and
+//  (pseudo UID cards) that the two step pseudo authentication can't be
+//  skipped or repeated. (P1/P2 and ISO case checks are in
+//  07_CommandStructure; update permissions are in 12_Reselect.)
+//
+//  Static UID card:  Select -> Authenticate -> session.
+//  Pseudo UID card:  Select (random UID FCI) -> Authenticate (pseudo keys)
+//                    -> Reselect (static FCI) -> Authenticate -> session.
+//
+//  0: Learn the card: static or pseudo UID, its real shell, UID and KAS,
+//     and an occupied IPE slot (OccNo) for the read checks.
+//  A: Before authentication: Read IPE gives the seal redacted (all FF).
+//     A garbage Authenticate is refused (6982) and changes nothing.
+//  B: A challenge can be answered only once:
+//       B1: Answer the challenge wrongly, then correctly: the correct answer
+//           must be refused (6982). A Reselect gives a fresh challenge,
+//           whose correct answer is accepted.
+//       B2: Fully authenticated, the same Authenticate again is refused
+//           (6982); the session carries on (the exchange is hashed) and
+//           Read IPE now gives the real seal. Commit.
+//       B3: After End Session, replaying the last good Authenticate must be
+//           refused (6982): the session ended, and its challenge with it.
+//  C: Pseudo UID card only:
+//       C1: Skipping the pseudo step (static UID and keys against the
+//           Select challenge) is refused (6982).
+//       C2: After the pseudo step, repeating it (pseudo UID and keys
+//           against the Reselect challenge) is refused (6982). The static
+//           step then succeeds.
+//
+//  Nothing is written to the card.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//                  An occupied IPE slot for the read checks (skipped if none).
+//
+
+// ---- Status words ---------------------------------------------------
+var SW_OK     = 9000;
+var SW_SEC    = 6982;
+
+// ---- Variables used by Authenticate.Inc & Commit.Inc -------------------
+var CardAid    = @Itso.Aid;
+var CardSelect = 00A40400 CardAid.Length CardAid;
+var HashAcc;
+var Hash;
+var Sig;
+var CmProof;
+var IsamProof;
+var RaResp;
+var RaFci;
+var Ra6F;
+var RaA5;
+var RaShell;
+var RaDir;
+var RaChal;
+var RaPUid;
+var RaSUid;
+var RaKas;
+var RaBody;
+var RaIsam;
+var RaMedia;
+
+var Tx;
+var Rx;
+
+// ---- Variables used by FciParse.Inc & AuthTry.Inc ----------------------
+var RsFci;
+var Rs6F;
+var RsA5;
+var RsShell;
+var RsCap;
+var RsDir;
+var RsOid;
+var RsCss;
+var RsChal;
+var RsPUid;
+var RsSUid;
+var RsKas;
+var Uid;
+var Body;
+var IsamRx;
+var MediaTx;
+var MediaRx;
+
+// ---- The card --------------------------------------------------------
+u8  Pseudo   = 0;                                                     // 1 = pseudo UID card
+var RealShell;                                                        // static shell, UID and KAS (after the pseudo step)
+var RealSUid;
+var RealKas;
+var PsShell;                                                          // pseudo shell, UID and KAS (Select FCI)
+var PsUid;
+var PsKas;
+var ReplayTx;                                                         // the last good Media Authenticate
+var GoodTx;
+var AuthJunk = 00112233445566778899AABBCCDDEEFF;                      // 16 bytes, never a valid answer
+var Redacted = FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
+var OpenRead;                                                         // Read IPE body before authentication
+var Entry;
+u8  ShellE   = 0;
+u8  OccNo    = 0;
+u8  Slot     = 0;
+
+
+@PrintLn(" ************ 0: Learn the card *************************************");
+@Include ("Authenticate.Inc");
+RealShell = RaShell;  RealSUid = RaSUid;  RealKas = RaKas;
+ShellE    = RaShell[18_d];
+for (Slot = ShellE - 1; Slot >= 1; Slot--) {                          // the first occupied IPE slot
+    Entry = RaDir[(2 + 5*(Slot-1))..(2 + 5*(Slot-1) + 4)];
+    if (Entry != 0000000000) {
+        OccNo = Slot;
+    }
+}
+if (OccNo == 0) { @PrintLn("No occupied IPE slot: the read checks are skipped"); }
+else            { @PrintLn("Read checks use IPE #" :: OccNo); }
+
+@ReaderA.Reset.cold;
+@ReaderB.Reset.cold;
+Rx = @ReaderB.Apdu("Isam Password", 90 18 00 00  10  @Itso.PwdI2F);
+@Assert(Rx[¬1..] == SW_OK, "Isam password OK?");
+RsFci = @ReaderA.Apdu("Media Select", CardSelect);
+@Assert(RsFci[¬1..] == SW_OK, "Select OK?");
+@Include ("FciParse.Inc");
+if (RsPUid.Length != 0) {
+    Pseudo = 1;
+    PsShell = RsShell;  PsUid = RsPUid;  PsKas = RsKas;
+    @PrintLn("Pseudo UID card");
+}
+else {
+    @PrintLn("Static UID card");
+}
+
+
+@PrintLn(" ************ A: Before authentication ********************************");
+if (OccNo != 0) {
+    Rx = @ReaderA.Apdu("Read Ipe #" :: OccNo :: " (not authenticated)", 9012 OccNo 00 00);
+    @Test(Rx[¬1..] == SW_OK, "Read Ipe OK");
+    @Test(Rx[¬17_d..¬2] == Redacted, "Not authenticated: the seal is redacted");
+    OpenRead = Rx[..¬18_d];                                           // entry + IPE body, no seal
+}
+
+Rx = @ReaderA.Apdu("Media Authenticate (garbage)", 9010 0000 10 AuthJunk 08);
+@Test(Rx[¬1..] == SW_SEC, "Garbage Authenticate refused");
+
+if (OccNo != 0) {
+    Rx = @ReaderA.Apdu("Read Ipe #" :: OccNo :: " (still not authenticated)", 9012 OccNo 00 00);
+    @Test(Rx[¬17_d..¬2] == Redacted, "After a refused Authenticate: the seal is still redacted");
+}
+
+
+@PrintLn(" ************ B1: Wrong answer, then the right one, same challenge *****");
+@ReaderA.Reset.cold;
+@ReaderB.Reset.cold;
+Rx = @ReaderB.Apdu("Isam Password", 90 18 00 00  10  @Itso.PwdI2F);
+@Assert(Rx[¬1..] == SW_OK, "Isam password OK?");
+RsFci = @ReaderA.Apdu("Media Select", CardSelect);
+@Assert(RsFci[¬1..] == SW_OK, "Select OK?");
+@Include ("FciParse.Inc");
+
+Rx = @ReaderB.Apdu("Isam End (tidy up)", 90 58 00 00 00);
+if (RsPUid.Length != 0) { Uid = RsPUid; } else { Uid = RsSUid; }
+Body   = @Itso.DateX RsShell Uid RsChal;
+IsamRx = @ReaderB.Apdu("Isam Begin", 90 48 00 RsKas[0] Body.Length Body 00);
+@Assert(IsamRx[¬1..] == SW_OK, "Begin OK?");
+GoodTx = 9010 0000 ((u8)(IsamRx.Length-2)) IsamRx[..¬2] 08;          // the right answer, held back
+
+Rx = @ReaderA.Apdu("Media Authenticate (wrong answer)", 9010 0000 10 AuthJunk 08);
+@Test(Rx[¬1..] == SW_SEC, "Wrong answer refused");
+Rx = @ReaderA.Apdu("Media Authenticate (right answer, used challenge)", GoodTx);
+@Test(Rx[¬1..] == SW_SEC, "Right answer to an already answered challenge refused: a challenge is single use");
+
+if (Rx[¬1..] == SW_OK) {                                              // the card took it: it is now authenticated and
+    @PrintLn("The card accepted a used challenge: cold reset to carry on"); //   would refuse Reselect, so start again
+    @ReaderA.Reset.cold;
+    @ReaderB.Reset.cold;
+    Rx = @ReaderB.Apdu("Isam Password", 90 18 00 00  10  @Itso.PwdI2F);
+    @Assert(Rx[¬1..] == SW_OK, "Isam password OK?");
+    RsFci = @ReaderA.Apdu("Media Select", CardSelect);
+}
+else {
+    RsFci = @ReaderA.Apdu("Reselect (fresh challenge)", 9022 0000 00);
+}
+@Test(RsFci[¬1..] == SW_OK, "Fresh challenge OK");
+@Include ("FciParse.Inc");
+@Include ("AuthTry.Inc");
+@Test(MediaRx[¬1..] == SW_OK, "Right answer to the fresh challenge accepted");
+Rx = @ReaderB.Apdu("Isam External Authenticate", 00 82 00 RsKas[1] (MediaRx.Length-2) MediaRx[..¬2]);
+@Test(Rx[¬1..] == SW_OK, "ISAM accepts the card's response");
+
+
+@PrintLn(" ************ B2: Authenticate again in a session *********************");
+@Include ("Authenticate.Inc");
+ReplayTx = 9010 0000 ((u8)(RaIsam.Length-2)) RaIsam[..¬2] 08;         // the Media Authenticate Authenticate.Inc sent last
+
+Rx = @ReaderA.Apdu("Media Authenticate (in session)", ReplayTx);  HashAcc = @Sha256.Update(HashAcc, ReplayTx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_SEC, "Authenticate in a session refused");
+
+if (OccNo != 0) {
+    Tx = 9012 OccNo 00 00;
+    Rx = @ReaderA.Apdu("Read Ipe #" :: OccNo :: " (authenticated)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_OK, "Read Ipe OK");
+    @Test(Rx[..¬18_d] == OpenRead, "Authenticated: same entry and body as before authentication");
+    @Test(Rx[¬17_d..¬2] != Redacted, "Authenticated: the seal is no longer redacted");
+}
+
+@Include ("Commit.Inc");                                              // the refused Authenticate is in the hash
+
+
+@PrintLn(" ************ B3: Replay the last good Authenticate after End Session **");
+Rx = @ReaderA.Apdu("Media Authenticate (replayed)", ReplayTx);
+@Test(Rx[¬1..] == SW_SEC, "Replayed Authenticate after End Session refused: its challenge was used");
+
+if (OccNo != 0) {
+    Rx = @ReaderA.Apdu("Read Ipe #" :: OccNo :: " (after the replay)", 9012 OccNo 00 00);
+    @Test(Rx[¬17_d..¬2] == Redacted, "After the replay: not authenticated, the seal is redacted");
+}
+
+
+if (Pseudo == 1) {
+    @PrintLn(" ************ C1: Pseudo UID card: skip the pseudo step ***************");
+    @ReaderA.Reset.cold;
+    @ReaderB.Reset.cold;
+    Rx = @ReaderB.Apdu("Isam Password", 90 18 00 00  10  @Itso.PwdI2F);
+    @Assert(Rx[¬1..] == SW_OK, "Isam password OK?");
+    RsFci = @ReaderA.Apdu("Media Select", CardSelect);
+    @Assert(RsFci[¬1..] == SW_OK, "Select OK?");
+    @Include ("FciParse.Inc");
+
+    Body    = @Itso.DateX RealShell RealSUid RsChal;                  // static shell, UID and KAS against the Select challenge
+    IsamRx  = @ReaderB.Apdu("Isam Begin (static, no pseudo step)", 90 48 00 RealKas[0] Body.Length Body 00);
+    @Assert(IsamRx[¬1..] == SW_OK, "Begin OK?");
+    MediaRx = @ReaderA.Apdu("Media Authenticate (static, no pseudo step)", 90 10 00 00 (IsamRx.Length-2) IsamRx[..¬2] 08);
+    @Test(MediaRx[¬1..] == SW_SEC, "Static authentication without the pseudo step refused");
+
+
+    @PrintLn(" ************ C2: Pseudo UID card: repeat the pseudo step *************");
+    @ReaderA.Reset.cold;
+    @ReaderB.Reset.cold;
+    Rx = @ReaderB.Apdu("Isam Password", 90 18 00 00  10  @Itso.PwdI2F);
+    @Assert(Rx[¬1..] == SW_OK, "Isam password OK?");
+    RsFci = @ReaderA.Apdu("Media Select", CardSelect);
+    @Assert(RsFci[¬1..] == SW_OK, "Select OK?");
+    @Include ("FciParse.Inc");
+    @Include ("AuthTry.Inc");
+    @Test(MediaRx[¬1..] == SW_OK, "Pseudo step accepted");
+    Rx = @ReaderB.Apdu("Isam External Authenticate (pseudo)", 00 82 00 RsKas[1] (MediaRx.Length-2) MediaRx[..¬2]);
+    @Test(Rx[¬1..] == SW_OK, "ISAM accepts the card's pseudo response");
+
+    RsFci = @ReaderA.Apdu("Reselect", 9022 0000 00);
+    @Test(RsFci[¬1..] == SW_OK, "Reselect OK");
+    @Include ("FciParse.Inc");
+    @Test(RsSUid.Length != 0, "After the pseudo step Reselect gives the static FCI");
+
+    Rx      = @ReaderB.Apdu("Isam End", 90 58 00 00 00);
+    Body    = @Itso.DateX PsShell PsUid RsChal;                       // pseudo shell, UID and KAS against the Reselect challenge
+    IsamRx  = @ReaderB.Apdu("Isam Begin (pseudo again)", 90 48 00 PsKas[0] Body.Length Body 00);
+    @Assert(IsamRx[¬1..] == SW_OK, "Begin OK?");
+    MediaRx = @ReaderA.Apdu("Media Authenticate (pseudo again)", 90 10 00 00 (IsamRx.Length-2) IsamRx[..¬2] 08);
+    @Test(MediaRx[¬1..] == SW_SEC, "Repeating the pseudo step refused");
+
+    RsFci = @ReaderA.Apdu("Reselect (fresh challenge)", 9022 0000 00);
+    @Test(RsFci[¬1..] == SW_OK, "Reselect OK");
+    @Include ("FciParse.Inc");
+    @Include ("AuthTry.Inc");
+    @Test(MediaRx[¬1..] == SW_OK, "Static step accepted");
+    Rx = @ReaderB.Apdu("Isam External Authenticate", 00 82 00 RsKas[1] (MediaRx.Length-2) MediaRx[..¬2]);
+    @Test(Rx[¬1..] == SW_OK, "ISAM accepts the card's response");
+}
