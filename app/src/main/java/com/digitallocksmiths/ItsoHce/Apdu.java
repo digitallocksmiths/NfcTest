@@ -40,21 +40,22 @@ public class Apdu {
         else if (baApdu.length == 5) {                                                          //
             apduCase = ApduCase.Two;                                                            // 2: Short form
             Lc = 0;                                                                             //      no RX
-            Le = baApdu[4];                                                                     //      TX = 1..256 bytes expected
+            Le = baApdu[4] & 0xFF;                                                              //      TX = 1..256 bytes expected
             if (Le == 0) {
                 Le = 256;
                 fAsMuchAsWeHave = true;
             }                                 //      0 ==> 256, as much as we have
         }
         else if (baApdu[4] != 0) {                                                              // not extended
-            if (baApdu.length == (5 + baApdu[4])) {                                             //
+            int iLen = baApdu[4] & 0xFF;                                                        //
+            if (baApdu.length == (5 + iLen)) {                                                  //
                 apduCase = ApduCase.Three;                                                      //      3: Short
-                Lc = baApdu[4];                                                                 //          RX = volume delivered
+                Lc = iLen;                                                                      //          RX = volume delivered
                 Le = 0;                                                                         //          TX = no response expected
             }
-            else if (baApdu.length == (5 + baApdu[4] + 1)) {                                    //
+            else if (baApdu.length == (5 + iLen + 1)) {                                         //
                 apduCase = ApduCase.Four;                                                       //      4: Short form
-                Lc = baApdu[4];                                                                 //          RX = volume delivered
+                Lc = iLen;                                                                      //          RX = volume delivered
                 Le = baApdu[baApdu.length - 1];                                                 //          TX = 1..256 bytes expected
                 if (Le == 0) {
                     Le = 256;

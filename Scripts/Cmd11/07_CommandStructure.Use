@@ -1,0 +1,373 @@
+// !TestName: CommandStructure
+//
+//  Confirms the CMD11 command structure is enforced:
+//    i)  Unexpected P1/P2 values are rejected        (6A86)
+//    ii) Each command must use its ISO 7816-4 case and the Lc/Le
+//        that go with it. The wrong case, a wrong Lc/Le, or an Lc
+//        that does not match the data delivered is rejected (6700).
+//
+//  Expected cases:
+//      Read IPE / VRG / Log   90 12|14|16  P1 P2  Le=00            Case 2
+//      Reselect               90 22        00 00  Le=00            Case 2
+//      Authenticate           90 10        00 00  Lc=10 data Le=00 Case 4
+//      Update IPE / VRG       90 18|1A     P1 00  Lc data          Case 3
+//      Update Log / Dir       90 1C|1E     00 00  Lc data          Case 3
+//      End Session            90 20        00 00  Lc=08 sig Le=00  Case 4
+//
+//  Each group also has a positive control: a correctly structured
+//  command that should get past the structure checks. Updates use a
+//  deliberately wrong password, so a correct structure gives 6300
+//  and nothing is ever written to the card. Authenticate uses
+//  garbage data, so a correct structure gives 6982.
+//
+//  All exchanges after authentication (rejected ones too) go into the
+//  session hash, and a real commit (End Session) at the end confirms
+//  that the card hashed the same traffic as we did.
+//
+//  End Session always ends the secure session, so each End Session
+//  structure test re-authenticates first (section 5).
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//                  Card to have an IPE in E-slot 1 (as for 06_ReadAndUpdate).
+//
+
+// ---- Status words ---------------------------------------------------
+var SW_OK      = 9000;
+var SW_P1P2    = 6A86;
+var SW_LEN     = 6700;
+var SW_SEC     = 6982;
+var SW_AUTH    = 6300;
+var SW_UNKNOWN = 6F00;
+
+// ---- Test data -----------------------------------------------------
+var Z16      = 00000000000000000000000000000000;                      // 16 zero bytes
+var Z15      = 000000000000000000000000000000;                        // 15 zero bytes
+var Z7       = 00000000000000;                                        //  7 zero bytes
+var BadPwd   = FFFFFFFFFFFFFFFF;                                      // never a real sector password
+var DummyIpe = 10 Z15 Z16;                                            // size byte 0x10: 16 body + 16 seal = 32 bytes
+var BigIpe   = 68 Z16 Z16 Z16 Z16 Z16 Z16 Z16 Z7;                     // size byte 0x68: 104 body + 16 seal = 120 bytes
+var DummyLog = Z16 Z16 Z16;                                           // one 0x30 byte log record
+var AuthJunk = 00112233445566778899AABBCCDDEEFF;                      // 16 bytes, never a valid response
+var DummySig = 0000000000000000;                                      // 8 bytes, never a valid signature
+
+var UpIpe    = BadPwd DummyIpe;                                       // Lc = 0x28
+var UpBig    = BadPwd BigIpe;                                         // Lc = 0x80 (>= 0x80 on purpose)
+var UpLog    = BadPwd DummyLog;                                       // Lc = 0x38
+
+var CardAid    = @Itso.Aid;
+var CardSelect = 00A40400 CardAid.Length CardAid;
+
+var Tx;
+var Rx;
+
+@ReaderA.Reset.cold;
+@ReaderB.Reset.cold;
+
+
+@PrintLn(" ************ 1: Pre-authentication: Reads, Reselect, Authenticate ******");
+
+Rx = @ReaderA.Apdu("Media Select", CardSelect);
+@Assert(Rx[¬1..] == SW_OK, "Select OK?");
+
+@PrintLn("============ Read IPE (9012) ");
+Rx = @ReaderA.Apdu("Read Ipe: control",       9012 0100 00);          @Test(Rx[¬1..] == SW_OK,      "Read Ipe: correct case 2 accepted");
+Rx = @ReaderA.Apdu("Read Ipe: P1=00",         9012 0000 00);          @Test(Rx[¬1..] == SW_P1P2,    "Read Ipe: P1=00 rejected");
+Rx = @ReaderA.Apdu("Read Ipe: P1=FF",         9012 FF00 00);          @Test(Rx[¬1..] == SW_P1P2,    "Read Ipe: P1=FF rejected");
+Rx = @ReaderA.Apdu("Read Ipe: P2=01",         9012 0101 00);          @Test(Rx[¬1..] == SW_P1P2,    "Read Ipe: P2=01 rejected");
+Rx = @ReaderA.Apdu("Read Ipe: P2=FF",         9012 01FF 00);          @Test(Rx[¬1..] == SW_P1P2,    "Read Ipe: P2=FF rejected");
+Rx = @ReaderA.Apdu("Read Ipe: case 1",        9012 0100);             @Test(Rx[¬1..] == SW_LEN,     "Read Ipe: case 1 (no Le) rejected");
+Rx = @ReaderA.Apdu("Read Ipe: case 3",        9012 0100 01 00);       @Test(Rx[¬1..] == SW_LEN,     "Read Ipe: case 3 (data, no Le) rejected");
+Rx = @ReaderA.Apdu("Read Ipe: case 4",        9012 0100 01 00 00);    @Test(Rx[¬1..] == SW_LEN,     "Read Ipe: case 4 (data + Le) rejected");
+Rx = @ReaderA.Apdu("Read Ipe: Le=01",         9012 0100 01);          @Test(Rx[¬1..] == SW_LEN,     "Read Ipe: Le=01 (not 00) rejected");
+Rx = @ReaderA.Apdu("Read Ipe: Lc mismatch",   9012 0100 01 0000 00);  @Test(Rx[¬1..] == SW_UNKNOWN, "Read Ipe: Lc not matching data rejected");
+
+@PrintLn("============ Read VRG (9014) ");
+Rx = @ReaderA.Apdu("Read Vrg: control",       9014 0100 00);          @Test(Rx[¬1..] == SW_OK,      "Read Vrg: correct case 2 accepted");
+Rx = @ReaderA.Apdu("Read Vrg: P1=00",         9014 0000 00);          @Test(Rx[¬1..] == SW_P1P2,    "Read Vrg: P1=00 rejected");
+Rx = @ReaderA.Apdu("Read Vrg: P1=FF",         9014 FF00 00);          @Test(Rx[¬1..] == SW_P1P2,    "Read Vrg: P1=FF rejected");
+Rx = @ReaderA.Apdu("Read Vrg: P2=01",         9014 0101 00);          @Test(Rx[¬1..] == SW_P1P2,    "Read Vrg: P2=01 rejected");
+Rx = @ReaderA.Apdu("Read Vrg: P2=FF",         9014 01FF 00);          @Test(Rx[¬1..] == SW_P1P2,    "Read Vrg: P2=FF rejected");
+Rx = @ReaderA.Apdu("Read Vrg: case 1",        9014 0100);             @Test(Rx[¬1..] == SW_LEN,     "Read Vrg: case 1 (no Le) rejected");
+Rx = @ReaderA.Apdu("Read Vrg: case 3",        9014 0100 01 00);       @Test(Rx[¬1..] == SW_LEN,     "Read Vrg: case 3 (data, no Le) rejected");
+Rx = @ReaderA.Apdu("Read Vrg: case 4",        9014 0100 01 00 00);    @Test(Rx[¬1..] == SW_LEN,     "Read Vrg: case 4 (data + Le) rejected");
+Rx = @ReaderA.Apdu("Read Vrg: Le=01",         9014 0100 01);          @Test(Rx[¬1..] == SW_LEN,     "Read Vrg: Le=01 (not 00) rejected");
+Rx = @ReaderA.Apdu("Read Vrg: Lc mismatch",   9014 0100 01 0000 00);  @Test(Rx[¬1..] == SW_UNKNOWN, "Read Vrg: Lc not matching data rejected");
+
+@PrintLn("============ Read Log (9016) ");
+Rx = @ReaderA.Apdu("Read Log: control",       9016 0100 00);          @Test(Rx[¬1..] == SW_OK,      "Read Log: correct case 2 accepted");
+Rx = @ReaderA.Apdu("Read Log: P1=00",         9016 0000 00);          @Test(Rx[¬1..] == SW_P1P2,    "Read Log: P1=00 rejected");
+Rx = @ReaderA.Apdu("Read Log: P1=06",         9016 0600 00);          @Test(Rx[¬1..] == SW_P1P2,    "Read Log: P1=06 rejected");
+Rx = @ReaderA.Apdu("Read Log: P1=FF",         9016 FF00 00);          @Test(Rx[¬1..] == SW_P1P2,    "Read Log: P1=FF rejected");
+Rx = @ReaderA.Apdu("Read Log: P2=01",         9016 0101 00);          @Test(Rx[¬1..] == SW_P1P2,    "Read Log: P2=01 rejected");
+Rx = @ReaderA.Apdu("Read Log: case 1",        9016 0100);             @Test(Rx[¬1..] == SW_LEN,     "Read Log: case 1 (no Le) rejected");
+Rx = @ReaderA.Apdu("Read Log: case 3",        9016 0100 01 00);       @Test(Rx[¬1..] == SW_LEN,     "Read Log: case 3 (data, no Le) rejected");
+Rx = @ReaderA.Apdu("Read Log: case 4",        9016 0100 01 00 00);    @Test(Rx[¬1..] == SW_LEN,     "Read Log: case 4 (data + Le) rejected");
+Rx = @ReaderA.Apdu("Read Log: Le=01",         9016 0100 01);          @Test(Rx[¬1..] == SW_LEN,     "Read Log: Le=01 (not 00) rejected");
+Rx = @ReaderA.Apdu("Read Log: Lc mismatch",   9016 0100 01 0000 00);  @Test(Rx[¬1..] == SW_UNKNOWN, "Read Log: Lc not matching data rejected");
+
+@PrintLn("============ Reselect (9022) ");
+Rx = @ReaderA.Apdu("Reselect: control",       9022 0000 00);          @Test(Rx[¬1..] == SW_OK,   "Reselect: correct case 2 accepted");
+Rx = @ReaderA.Apdu("Reselect: P1=01",         9022 0100 00);          @Test(Rx[¬1..] == SW_P1P2, "Reselect: P1=01 rejected");
+Rx = @ReaderA.Apdu("Reselect: P2=01",         9022 0001 00);          @Test(Rx[¬1..] == SW_P1P2, "Reselect: P2=01 rejected");
+Rx = @ReaderA.Apdu("Reselect: case 1",        9022 0000);             @Test(Rx[¬1..] == SW_LEN,  "Reselect: case 1 (no Le) rejected");
+Rx = @ReaderA.Apdu("Reselect: case 3",        9022 0000 01 00);       @Test(Rx[¬1..] == SW_LEN,  "Reselect: case 3 (data, no Le) rejected");
+Rx = @ReaderA.Apdu("Reselect: case 4",        9022 0000 01 00 00);    @Test(Rx[¬1..] == SW_LEN,  "Reselect: case 4 (data + Le) rejected");
+Rx = @ReaderA.Apdu("Reselect: Le=01",         9022 0000 01);          @Test(Rx[¬1..] == SW_LEN,  "Reselect: Le=01 (not 00) rejected");
+
+@PrintLn("============ Authenticate (9010) ");
+@PrintLn("Garbage response data: a correct structure should fail the crypto with 6982");
+Rx = @ReaderA.Apdu("Auth: control",           9010 0000 10 AuthJunk 08);         @Test(Rx[¬1..] == SW_SEC,     "Auth: correct case 4 passes structure checks");
+Rx = @ReaderA.Apdu("Auth: P1=01",             9010 0100 10 AuthJunk 08);         @Test(Rx[¬1..] == SW_P1P2,    "Auth: P1=01 rejected");
+Rx = @ReaderA.Apdu("Auth: P2=01",             9010 0001 10 AuthJunk 08);         @Test(Rx[¬1..] == SW_P1P2,    "Auth: P2=01 rejected");
+Rx = @ReaderA.Apdu("Auth: case 1",            9010 0000);                        @Test(Rx[¬1..] == SW_LEN,     "Auth: case 1 rejected");
+Rx = @ReaderA.Apdu("Auth: case 2",            9010 0000 00);                     @Test(Rx[¬1..] == SW_LEN,     "Auth: case 2 rejected");
+Rx = @ReaderA.Apdu("Auth: case 3",            9010 0000 10 AuthJunk);            @Test(Rx[¬1..] == SW_LEN,     "Auth: case 3 (no Le) rejected");
+Rx = @ReaderA.Apdu("Auth: Lc=0F",             9010 0000 0F AuthJunk[..¬1] 08);   @Test(Rx[¬1..] == SW_LEN,     "Auth: Lc=0F rejected");
+Rx = @ReaderA.Apdu("Auth: Lc=11",             9010 0000 11 AuthJunk 00 08);      @Test(Rx[¬1..] == SW_LEN,     "Auth: Lc=11 rejected");
+Rx = @ReaderA.Apdu("Auth: Le!=8",             9010 0000 10 AuthJunk 07);         @Test(Rx[¬1..] == SW_LEN,     "Auth: Le=07 rejected");
+Rx = @ReaderA.Apdu("Auth: Lc mismatch",       9010 0000 10 AuthJunk 0000 00);    @Test(Rx[¬1..] == SW_UNKNOWN, "Auth: Lc not matching data rejected");
+
+
+@PrintLn(" ************ 2: Authenticate the Card with the ISAM *******************");
+@Include ("01_Auth.Use");                                       // Sets variables including 'Shell' & 'Directory'
+
+u8  ShellE  = Shell[18_d];
+var HashAcc = @Sha256.init;
+
+Rx = @ReaderB.Apdu("WSAM Dir", 9040 0002 ((u8)(2 + Directory.Length)) ((u16)Directory.Length)  Directory);
+Rx = @ReaderB.Apdu("VERIFY_ITSO", 904E 0000 00 );
+@Assert(Rx[¬1..] == SW_OK, "Verify Directory");
+
+
+@PrintLn(" ************ 3: Post-authentication: Reads & Reselect ****************");
+@PrintLn("Every exchange from here on is part of the session hash");
+
+Tx = 9012 0100 00;          Rx = @ReaderA.Apdu("Read Ipe: control",  Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK,   "Auth'd Read Ipe: correct case 2 accepted");
+Tx = 9012 ShellE 00 00;     Rx = @ReaderA.Apdu("Read Ipe: P1=E",     Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Auth'd Read Ipe: P1=E rejected");
+Tx = 9012 0100 01 00 00;    Rx = @ReaderA.Apdu("Read Ipe: case 4",   Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Auth'd Read Ipe: case 4 rejected");
+
+Tx = 9014 0100 00;          Rx = @ReaderA.Apdu("Read Vrg: control",  Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK,   "Auth'd Read Vrg: correct case 2 accepted");
+Tx = 9014 ShellE 00 00;     Rx = @ReaderA.Apdu("Read Vrg: P1=E",     Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Auth'd Read Vrg: P1=E rejected");
+Tx = 9014 0100 01 00 00;    Rx = @ReaderA.Apdu("Read Vrg: case 4",   Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Auth'd Read Vrg: case 4 rejected");
+
+Tx = 9016 0500 00;          Rx = @ReaderA.Apdu("Read Log: control",  Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK,   "Auth'd Read Log: correct case 2 accepted");
+Tx = 9016 0600 00;          Rx = @ReaderA.Apdu("Read Log: P1=06",    Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Auth'd Read Log: P1=06 rejected");
+Tx = 9016 0100 01 00 00;    Rx = @ReaderA.Apdu("Read Log: case 4",   Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Auth'd Read Log: case 4 rejected");
+
+Tx = 9022 0100 00;          Rx = @ReaderA.Apdu("Reselect: P1=01",    Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Auth'd Reselect: P1=01 rejected");
+Tx = 9022 0000 01 00 00;    Rx = @ReaderA.Apdu("Reselect: case 4",   Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Auth'd Reselect: case 4 rejected");
+
+
+@PrintLn(" ************ 4: Post-authentication: Updates (wrong password) *********");
+@PrintLn("A correct structure should get past the structure checks and then fail the password with 6300");
+
+@PrintLn("============ Update IPE (9018) ");
+Tx = 9018 0100 ((u8)UpIpe.Length) UpIpe;                Rx = @ReaderA.Apdu("Upd Ipe: control",      Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "Update Ipe: correct case 3 passes structure checks");
+Tx = 9018 0100 ((u8)UpBig.Length) UpBig;                Rx = @ReaderA.Apdu("Upd Ipe: Lc=80",        Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "Update Ipe: correct case 3 with Lc >= 0x80 passes structure checks");
+Tx = 9018 0000 ((u8)UpIpe.Length) UpIpe;                Rx = @ReaderA.Apdu("Upd Ipe: P1=00",        Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Update Ipe: P1=00 rejected");
+Tx = 9018 ShellE 00 ((u8)UpIpe.Length) UpIpe;           Rx = @ReaderA.Apdu("Upd Ipe: P1=E",         Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Update Ipe: P1=E rejected");
+Tx = 9018 FF00 ((u8)UpIpe.Length) UpIpe;                Rx = @ReaderA.Apdu("Upd Ipe: P1=FF",        Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Update Ipe: P1=FF rejected");
+Tx = 9018 0101 ((u8)UpIpe.Length) UpIpe;                Rx = @ReaderA.Apdu("Upd Ipe: P2=01",        Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Update Ipe: P2=01 rejected");
+Tx = 9018 0100;                                         Rx = @ReaderA.Apdu("Upd Ipe: case 1",       Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Ipe: case 1 rejected");
+Tx = 9018 0100 00;                                      Rx = @ReaderA.Apdu("Upd Ipe: case 2",       Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Ipe: case 2 rejected");
+Tx = 9018 0100 ((u8)UpIpe.Length) UpIpe 00;             Rx = @ReaderA.Apdu("Upd Ipe: case 4",       Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Ipe: case 4 (trailing Le) rejected");
+Tx = 9018 0100 ((u8)(UpIpe.Length-1)) UpIpe[..¬1];      Rx = @ReaderA.Apdu("Upd Ipe: short body",   Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Ipe: Lc shorter than the IPE size byte says rejected");
+Tx = 9018 0100 ((u8)UpIpe.Length) UpIpe 0000;           Rx = @ReaderA.Apdu("Upd Ipe: Lc mismatch",  Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_UNKNOWN,  "Update Ipe: Lc not matching data rejected");
+
+@PrintLn("============ Update VRG (901A) ");
+Tx = 901A 0100 ((u8)UpIpe.Length) UpIpe;                Rx = @ReaderA.Apdu("Upd Vrg: control",      Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "Update Vrg: correct case 3 passes structure checks");
+Tx = 901A 0000 ((u8)UpIpe.Length) UpIpe;                Rx = @ReaderA.Apdu("Upd Vrg: P1=00",        Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Update Vrg: P1=00 rejected");
+Tx = 901A ShellE 00 ((u8)UpIpe.Length) UpIpe;           Rx = @ReaderA.Apdu("Upd Vrg: P1=E",         Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Update Vrg: P1=E rejected");
+Tx = 901A 0101 ((u8)UpIpe.Length) UpIpe;                Rx = @ReaderA.Apdu("Upd Vrg: P2=01",        Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Update Vrg: P2=01 rejected");
+Tx = 901A 0100;                                         Rx = @ReaderA.Apdu("Upd Vrg: case 1",       Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Vrg: case 1 rejected");
+Tx = 901A 0100 00;                                      Rx = @ReaderA.Apdu("Upd Vrg: case 2",       Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Vrg: case 2 rejected");
+Tx = 901A 0100 ((u8)UpIpe.Length) UpIpe 00;             Rx = @ReaderA.Apdu("Upd Vrg: case 4",       Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Vrg: case 4 (trailing Le) rejected");
+Tx = 901A 0100 ((u8)(UpIpe.Length-1)) UpIpe[..¬1];      Rx = @ReaderA.Apdu("Upd Vrg: short body",   Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Vrg: Lc shorter than the VRG size byte says rejected");
+Tx = 901A 0100 ((u8)UpIpe.Length) UpIpe 0000;           Rx = @ReaderA.Apdu("Upd Vrg: Lc mismatch",  Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_UNKNOWN,  "Update Vrg: Lc not matching data rejected");
+
+@PrintLn("============ Update Log (901C) ");
+Tx = 901C 0000 ((u8)UpLog.Length) UpLog;                Rx = @ReaderA.Apdu("Upd Log: control",      Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "Update Log: correct case 3 passes structure checks");
+Tx = 901C 0100 ((u8)UpLog.Length) UpLog;                Rx = @ReaderA.Apdu("Upd Log: P1=01",        Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Update Log: P1=01 rejected");
+Tx = 901C 0001 ((u8)UpLog.Length) UpLog;                Rx = @ReaderA.Apdu("Upd Log: P2=01",        Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Update Log: P2=01 rejected");
+Tx = 901C 0000;                                         Rx = @ReaderA.Apdu("Upd Log: case 1",       Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Log: case 1 rejected");
+Tx = 901C 0000 00;                                      Rx = @ReaderA.Apdu("Upd Log: case 2",       Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Log: case 2 rejected");
+Tx = 901C 0000 ((u8)UpLog.Length) UpLog 00;             Rx = @ReaderA.Apdu("Upd Log: case 4",       Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Log: case 4 (trailing Le) rejected");
+Tx = 901C 0000 07 BadPwd[..¬1];                         Rx = @ReaderA.Apdu("Upd Log: Lc=07",        Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Log: Lc=07 (less than a password) rejected");
+Tx = 901C 0000 08 BadPwd;                               Rx = @ReaderA.Apdu("Upd Log: Lc=08",        Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Log: Lc=08 (password, no record) rejected");
+Tx = 901C 0000 ((u8)(UpLog.Length+1)) UpLog 00;         Rx = @ReaderA.Apdu("Upd Log: Lc=39",        Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Log: record longer than 0x30 rejected");
+Tx = 901C 0000 ((u8)UpLog.Length) UpLog 0000;           Rx = @ReaderA.Apdu("Upd Log: Lc mismatch",  Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_UNKNOWN,  "Update Log: Lc not matching data rejected");
+
+@PrintLn("============ Update Dir (901E) ");
+var UpDir = BadPwd Directory;                                                    // current directory as dummy contents
+Tx = 901E 0000 ((u8)UpDir.Length) UpDir;                Rx = @ReaderA.Apdu("Upd Dir: control",      Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "Update Dir: correct case 3 passes structure checks");
+Tx = 901E 0100 ((u8)UpDir.Length) UpDir;                Rx = @ReaderA.Apdu("Upd Dir: P1=01",        Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Update Dir: P1=01 rejected");
+Tx = 901E 0001 ((u8)UpDir.Length) UpDir;                Rx = @ReaderA.Apdu("Upd Dir: P2=01",        Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_P1P2, "Update Dir: P2=01 rejected");
+Tx = 901E 0000;                                         Rx = @ReaderA.Apdu("Upd Dir: case 1",       Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Dir: case 1 rejected");
+Tx = 901E 0000 00;                                      Rx = @ReaderA.Apdu("Upd Dir: case 2",       Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Dir: case 2 rejected");
+Tx = 901E 0000 ((u8)UpDir.Length) UpDir 00;             Rx = @ReaderA.Apdu("Upd Dir: case 4",       Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Dir: case 4 (trailing Le) rejected");
+Tx = 901E 0000 ((u8)(UpDir.Length-1)) UpDir[..¬1];      Rx = @ReaderA.Apdu("Upd Dir: short",        Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Dir: one byte short rejected");
+Tx = 901E 0000 ((u8)(UpDir.Length+1)) UpDir 00;         Rx = @ReaderA.Apdu("Upd Dir: long",         Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN,  "Update Dir: one byte long rejected");
+Tx = 901E 0000 ((u8)UpDir.Length) UpDir 0000;           Rx = @ReaderA.Apdu("Upd Dir: Lc mismatch",  Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_UNKNOWN,  "Update Dir: Lc not matching data rejected");
+
+
+@PrintLn(" ============ Commit: card must have hashed all of the above ");
+var Hash = @Sha256.Final(HashAcc);
+
+Rx      = @ReaderB.Apdu("WSAM", 9040 0002 ((u8)(2 + Hash.Length)) ((u16)Hash.Length) Hash);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+
+Rx      = @ReaderB.Apdu("PIMO", 904A000004 00040020 00);
+@Assert(Rx[¬1..] == SW_OK, "PIMO");
+var Sig = Rx[..¬2];
+
+Rx      = @ReaderA.Apdu("End Session", 9020 0000 ((u8)Sig.length) Sig 00);
+@Test(Rx[¬1..] == SW_OK, "End Session accepted: rejected commands were hashed consistently");
+var CmProof = Rx[..¬2];
+
+Rx      = @ReaderB.Apdu("WSAM", 9040 0002 ((u8)(2 + Sig.Length)) ((u16)Sig.Length) Sig);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+
+Rx      = @ReaderB.Apdu("PIMO", 904A000004 00040008 00);
+@Assert(Rx[¬1..] == SW_OK, "PIMO");
+var IsamProof = Rx[..¬2];
+
+@Test(CmProof == IsamProof, "Verify the session signatures.");
+
+
+@PrintLn(" ************ 5: End Session (9020) structure *************************");
+@PrintLn("End Session always ends the session, so we re-authenticate before each test.");
+@PrintLn("A dummy signature is used, so a correct structure should give 6300.");
+
+var RaResp;
+var RaFci;
+var Ra6F;
+var RaA5;
+var RaShell;
+var RaChal;
+var RaPUid;
+var RaSUid;
+var RaKas;
+var RaBody;
+var RaIsam;
+var RaMedia;
+u8  Pass = 0;
+
+for (Pass = 0; Pass < 9; Pass++) {
+
+    @PrintLn("============ End Session test #" :: Pass :: ": re-authenticate");
+    @ReaderA.Reset.cold;
+    @ReaderB.Reset.cold;
+
+    RaResp = @ReaderB.Apdu("Isam Password", 90 18 00 00  10  @Itso.PwdI2F);
+    @Assert(RaResp[¬1..] == SW_OK, "Isam password OK?");
+
+    RaFci   = @ReaderA.Apdu("Media Select", CardSelect);
+    @Assert(RaFci[¬1..] == SW_OK, "Select OK?");
+    Ra6F    = @Tlv(6F, RaFci);
+    RaA5    = @Tlv(A5, Ra6F);
+    RaShell = @Tlv(C0, RaA5);
+    RaChal  = @Tlv(C5, RaA5);
+    RaPUid  = @Tlv(C6, RaA5);
+    RaSUid  = @Tlv(C7, RaA5);
+    RaKas   = @Tlv(C8, RaA5);
+
+    if (RaPUid.Length != 0) {                                                         // Pseudo UID: authenticate that first
+        RaBody  = @Itso.DateX RaShell RaPUid RaChal;
+        RaIsam  = @ReaderB.Apdu("Isam Begin (pseudo)", 90 48 00 RaKas[0] RaBody.Length RaBody 00);
+        @Assert(RaIsam[¬1..] == SW_OK, "Begin OK?");
+        RaMedia = @ReaderA.Apdu("Media Authenticate (pseudo)", 90 10 00 00 (RaIsam.Length-2) RaIsam[..¬2] 00);
+        @Assert(RaMedia[¬1..] == SW_OK, "Authenticate OK?");
+        RaResp  = @ReaderB.Apdu("Isam External Authenticate (pseudo)", 00 82 00 RaKas[1] (RaMedia.Length-2) RaMedia[..¬2]);
+        @Assert(RaResp[¬1..] == SW_OK, "External Authenticate OK?");
+
+        RaFci   = @ReaderA.Apdu("Media Reselect", 9022 0000 00);
+        @Assert(RaFci[¬1..] == SW_OK, "Reselect OK?");
+        Ra6F    = @Tlv(6F, RaFci);
+        RaA5    = @Tlv(A5, Ra6F);
+        RaShell = @Tlv(C0, RaA5);
+        RaChal  = @Tlv(C5, RaA5);
+        RaSUid  = @Tlv(C7, RaA5);
+        RaKas   = @Tlv(C8, RaA5);
+
+        RaResp  = @ReaderB.Apdu("Isam End (pseudo)", 90 58 00 00 00);
+        @Assert(RaResp[¬1..] == SW_OK, "End OK?");
+    }
+
+    RaBody  = @Itso.DateX RaShell RaSUid RaChal;
+    RaIsam  = @ReaderB.Apdu("Isam Begin", 90 48 00 RaKas[0] RaBody.Length RaBody 00);
+    @Assert(RaIsam[¬1..] == SW_OK, "Begin OK?");
+    RaMedia = @ReaderA.Apdu("Media Authenticate", 90 10 00 00 (RaIsam.Length-2) RaIsam[..¬2] 00);
+    @Assert(RaMedia[¬1..] == SW_OK, "Authenticate OK?");
+    RaResp  = @ReaderB.Apdu("Isam External Authenticate", 00 82 00 RaKas[1] (RaMedia.Length-2) RaMedia[..¬2]);
+    @Assert(RaResp[¬1..] == SW_OK, "External Authenticate OK?");
+
+    if (Pass == 0) { Rx = @ReaderA.Apdu("End Session: control",     9020 0000 08 DummySig 00);         @Test(Rx[¬1..] == SW_AUTH,    "End Session: correct case 4 passes structure checks"); }
+    if (Pass == 1) { Rx = @ReaderA.Apdu("End Session: P1=01",       9020 0100 08 DummySig 00);         @Test(Rx[¬1..] == SW_P1P2,    "End Session: P1=01 rejected"); }
+    if (Pass == 2) { Rx = @ReaderA.Apdu("End Session: P2=01",       9020 0001 08 DummySig 00);         @Test(Rx[¬1..] == SW_P1P2,    "End Session: P2=01 rejected"); }
+    if (Pass == 3) { Rx = @ReaderA.Apdu("End Session: case 1",      9020 0000);                        @Test(Rx[¬1..] == SW_LEN,     "End Session: case 1 rejected"); }
+    if (Pass == 4) { Rx = @ReaderA.Apdu("End Session: case 2",      9020 0000 00);                     @Test(Rx[¬1..] == SW_LEN,     "End Session: case 2 rejected"); }
+    if (Pass == 5) { Rx = @ReaderA.Apdu("End Session: case 3",      9020 0000 08 DummySig);            @Test(Rx[¬1..] == SW_LEN,     "End Session: case 3 (no Le) rejected"); }
+    if (Pass == 6) { Rx = @ReaderA.Apdu("End Session: Lc=07",       9020 0000 07 DummySig[..¬1] 00);   @Test(Rx[¬1..] == SW_LEN,     "End Session: Lc=07 rejected"); }
+    if (Pass == 7) { Rx = @ReaderA.Apdu("End Session: Lc=09",       9020 0000 09 DummySig 00 00);      @Test(Rx[¬1..] == SW_LEN,     "End Session: Lc=09 rejected"); }
+    if (Pass == 8) { Rx = @ReaderA.Apdu("End Session: Lc mismatch", 9020 0000 08 DummySig 0000 00);    @Test(Rx[¬1..] == SW_UNKNOWN, "End Session: Lc not matching data rejected"); }
+
+    // An update when not authenticated gets 6982. When authenticated (bad password) it gets 6300.
+    Rx = @ReaderA.Apdu("Session ended?", 901C 0000 ((u8)UpLog.Length) UpLog);
+    if (Pass != 8) {
+        @Test(Rx[¬1..] == SW_SEC, "End Session #" :: Pass :: " terminated the secure session");
+    }
+    else {
+        @Test(Rx[¬1..] == SW_AUTH, "End Session #" :: Pass :: " session not terminated (malformed apdu was not executed)");
+    }
+}

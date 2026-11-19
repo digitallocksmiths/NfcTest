@@ -523,9 +523,13 @@ public class Cmd11 extends VCard {
     protected void Dispatch(Apdu apdu)  throws Apdu.ExitException  {                                 // *** Card dispatch
         Log.d(TAG, "Dispatch");
 
-        boolean fAlreadyAuthenticated = false;
+        boolean fAlreadyAuthenticated = (sfAuthenticated == sbool.True);                            // needs to be set before test's can report errors.
 
         try {
+            if (apdu.apduCase == Apdu.ApduCase.Malformed) {                                         // have we been passed a good APDU?
+                ApduException.Throw(Apdu.SW.UNKNOWN);                                               //      no, exit asap via the hash monitor
+            }                                                                                       //
+
             if (apdu.Cla != OurCLA) {                                                               // Must be our CLA
                 ApduException.Throw(Apdu.SW.CLA_NOT_SUPPORTED);                                     //      nothing else is good enough.
             }                                                                                       //
@@ -548,7 +552,6 @@ public class Cmd11 extends VCard {
                 }                                                                                   //
             }                                                                                       //
             else if (sfAuthenticated == sbool.True) {                                               // Authenticated, so Secure session active
-                fAlreadyAuthenticated = true;                                                       //
                 switch (apdu.Ins) {                                                                 //      Which INS do we want ?
                     case INS_ReadIpe:                 DoReadIpe(apdu);        break;                //      supported
                     case INS_ReadVrg:                 DoReadVrg(apdu);        break;                //      ..
@@ -607,8 +610,14 @@ public class Cmd11 extends VCard {
             throw new VCardIntegrityException("DoAuthenticate: Boolean is not TRUE or FALSE.");
         }
 
-        if (apdu.Lc != 16) {                                                                        // Auth expects 16 bytes from the ISAM.
-            ApduException.Throw(Apdu.SW.WRONG_LENGTH);												//      Not happy response
+        if ((apdu.P1 != 0) || (apdu.P2 != 0)) {                                                     // P1 & P2 must be zero
+            ApduException.Throw(Apdu.SW.INCORRECT_P1P2);                                            //      Oops. it's not
+        }                                                                                           //
+
+        if ((apdu.apduCase != Apdu.ApduCase.Four) ||
+            (apdu.Lc != 16) ||                                                                      // Auth expects 16 in
+            ((apdu.Le != 8) && (!apdu.fAsMuchAsWeHave))) {                                          // and 8 out (Le=0 is forgiven)
+                ApduException.Throw(Apdu.SW.WRONG_LENGTH);						    				//      Not happy response
         }																							//
 
         byte[] baResponse;                                                                          // response to the challenge's response.
@@ -787,15 +796,15 @@ public class Cmd11 extends VCard {
 
         int iIpeNo = apdu.P1;
 
+        if ((apdu.apduCase != Apdu.ApduCase.Two) || (!apdu.fAsMuchAsWeHave)) {                      // we want case 2 read all.
+            ApduException.Throw(Apdu.SW.WRONG_LENGTH);			                                    //
+        }																                            //
+
         if ((iIpeNo == 0) ||                                                                        // Check != 0
             (iIpeNo > (shell.getE()-1)) ||                                                          //       <= E-1
             (apdu.P2 != 0)) {                                                                       //       P2 as prescribed, zero.
                 ApduException.Throw(Apdu.SW.INCORRECT_P1P2);                                        //      Oops. it's not
         }                                                                                           //
-
-        if (!apdu.fAsMuchAsWeHave) {	                                						    // length = all.
-            ApduException.Throw(Apdu.SW.WRONG_LENGTH);			                                    //
-        }																                            //
 
         if (directory.E_Empty(iIpeNo)) {                                                            // Confirm the IPE is not empty
             ApduException.Throw(Apdu.SW.RECORD_NOT_FOUND);                                          // Report "Record Not Found" as per spec.
@@ -839,15 +848,15 @@ public class Cmd11 extends VCard {
 
         int iIpeNo = apdu.P1;
 
+        if ((apdu.apduCase != Apdu.ApduCase.Two) || (!apdu.fAsMuchAsWeHave)) {                      // we want case 2 read all.
+            ApduException.Throw(Apdu.SW.WRONG_LENGTH);			                                    //
+        }																                            //
+
         if ((iIpeNo == 0) ||                                                                        // Check != 0
             (iIpeNo > (shell.getE()-1)) ||                                                          //       <= E-1
             (apdu.P2 != 0)) {                                                                       //       P2 as prescribed, zero.
                 ApduException.Throw(Apdu.SW.INCORRECT_P1P2);                                        //      Oops. it's not
         }                                                                                           //
-
-        if (!apdu.fAsMuchAsWeHave) {                                							    // length = all.
-            ApduException.Throw(Apdu.SW.WRONG_LENGTH);			                                    //
-        }																                            //
 
         if (directory.E_Empty(iIpeNo)) {                                                            // Confirm the IPE is not empty
             ApduException.Throw(Apdu.SW.RECORD_NOT_FOUND);                                          // Report "Record Not Found" as per spec.
@@ -888,14 +897,14 @@ public class Cmd11 extends VCard {
     private void DoReadLog(Apdu apdu) throws Apdu.ExitException, VCardIntegrityException {           // *** DoReadLog
         // ToDo: test for case ?
 
+        if ((apdu.apduCase != Apdu.ApduCase.Two) || (!apdu.fAsMuchAsWeHave)) {                      // we want case 2 read all.
+            ApduException.Throw(Apdu.SW.WRONG_LENGTH);			                                    //
+        }																                            //
+
         if ((apdu.P1 < 1) || (apdu.P1 > 5)	||                                                      // record count, 1..5 == OK
             (apdu.P2 != 0)) {							                                            //     P2 must be zero
                 ApduException.Throw(Apdu.SW.INCORRECT_P1P2);                                        //  Go home if we don't like it.
         }
-
-        if (! apdu.fAsMuchAsWeHave) {		                                					    // length = all.
-            ApduException.Throw(Apdu.SW.WRONG_LENGTH);			                                    //
-        }																                            //
 
         short  sLen          = (short)(apdu.P1 * 0x30);                                             // how many * record size
         byte[] baDeliverable = new byte[sLen];                                                      // Space needed
@@ -922,7 +931,13 @@ public class Cmd11 extends VCard {
         byte[] baA5Material;
         // ToDo: test for case ?
 
-        // ToDo no tests for P1,P2, Le
+        if ((apdu.apduCase != Apdu.ApduCase.Two) || (!apdu.fAsMuchAsWeHave)) {                      // we want case 2 read all.
+            ApduException.Throw(Apdu.SW.WRONG_LENGTH);			                                    //
+        }																                            //
+
+        if ((apdu.P1 != 0) || (apdu.P2 != 0)) {                                                     // P1 & P2 must be zero
+            ApduException.Throw(Apdu.SW.INCORRECT_P1P2);                                            //      Oops. it's not
+        }                                                                                           //
 
         if (sfUsingPseudoShellUID == sbool.True) {                                                  // if pseudo shell ...
             if      (sfPseudoAuthenticated == sbool.False) { baA5Material = FciBuildRandom(); }     //                 and not pseudo authenticated, reissue the Random UID FCI
@@ -961,22 +976,23 @@ public class Cmd11 extends VCard {
 
         // ToDo: test for case 3
 
-        int iIpeNo   = apdu.P1 - 1;                                                                 // IPE[1..E-1] ==> range 0..E-2
+        int iIpeNo   = apdu.P1-1;                                                                   // IPE[1..E-1] ==> range 0..E-2
         int iDataLen = apdu.Lc;                                                                     // Payload size
         UpdateCheckIpeNo(apdu, iIpeNo);                                                             // IPE# happy?
         UpdateCheckLength(apdu, iDataLen);                                                          // Len happy ?
         UpdateCheckPassword(apdu, iIpeNo);                                                          // Password Happy ?
-        UpdateStoreAndExit(apdu, aIpe[iIpeNo].baBody, iDataLen);                                // Copy new data to page and update the hash exit Happy exception.
+        UpdateStoreAndExit(apdu, aIpe[iIpeNo].baBody, iDataLen);                                    // Copy new data to page and update the hash exit Happy exception.
     }
 
-    private void UpdateCheckIpeNo(Apdu apdu, int  iIpeNo) throws Apdu.ExitException {                // check parameters and collect data
-        if ((iIpeNo > (shell.getE()-2)) || (apdu.P2 != 0)) {                                        // Check IPE(1..E-1) & P2==0 before continuing
+    private void UpdateCheckIpeNo(Apdu apdu, int  iIpeNo) throws Apdu.ExitException {               // check parameters and collect data
+        if ((iIpeNo < 0) || ((shell.getE()-2) < iIpeNo) || (apdu.P2 != 0)) {                        // Check IPE(1..E-1) & P2==0 before continuing
             ApduException.Throw(Apdu.SW.INCORRECT_P1P2);                                            //      Oops. it's not
         }                                                                                           //
     }                                                                                               //
 
-    private void UpdateCheckLength(Apdu apdu, int iLen) throws Apdu.ExitException {                  // check parameters and collect data
-        if ((apdu.Lc <= iPASSWORD_SIZE) ||                                                          // should be big enough to hold length at least
+    private void UpdateCheckLength(Apdu apdu, int iLen) throws Apdu.ExitException {                 // check parameters and collect data
+        if ((apdu.apduCase != Apdu.ApduCase.Three) ||                                               // we want case 3 write with no read
+            (apdu.Lc <= iPASSWORD_SIZE) ||                                                          // should be big enough to hold length at least
             (iLen != (iPASSWORD_SIZE +(apdu.baRxData[iPASSWORD_SIZE] & 0xFC) + 16)) ||              // length should be pwd::ipe::seal
             ((apdu.baRxData[iPASSWORD_SIZE] & 0xFC) > iIPE_MAXSIZE) ) {                             // and <= limit to fit in an APDU
             ApduException.Throw(Apdu.SW.WRONG_LENGTH);											    //
@@ -1038,9 +1054,17 @@ public class Cmd11 extends VCard {
     private void DoUpdateLog(Apdu apdu) throws Apdu.ExitException, Exception {                      // *** DoUpdateLog
         // ToDo: test for case 3
 
+        if (apdu.apduCase != Apdu.ApduCase.Three)  {                                                // we want case 3 write with no read
+            ApduException.Throw(Apdu.SW.WRONG_LENGTH);                                              //      Oops. it's not what we prescribed
+        }                                                                                           //
+
+        if ((apdu.P1 != 0) || (apdu.P2 != 0)) {                                                     // P1 & P2 must be zero
+            ApduException.Throw(Apdu.SW.INCORRECT_P1P2);                                            //      Oops. it's not
+        }                                                                                           //
+
         int iIpeNo   = shell.getE() -1;                                                             // IPE # E is reserved for the log
         int iDataLen = apdu.Lc;                                                                     // Payload size
-        if ((iDataLen < iPASSWORD_SIZE) || (iPASSWORD_SIZE + 0x30 < iDataLen)) {                    // length should be pwd::logRecord[..30]
+        if ((iDataLen < iPASSWORD_SIZE + 1) || (iPASSWORD_SIZE + 0x30 < iDataLen)) {                // length should be pwd::logRecord[1..30]
             ApduException.Throw(Apdu.SW.WRONG_LENGTH);                                              //      Oops. it's not
         }                                                                                           //
         UpdateCheckPassword(apdu, iIpeNo);                                                          // Password Happy ?
@@ -1065,6 +1089,15 @@ public class Cmd11 extends VCard {
     // ##########################################################################
     private void DoUpdateDir(Apdu apdu) throws Apdu.ExitException, Exception {                      // *** DoUpdateDir
         // ToDo: test for case 3
+        // ToDo: as per log above. See common code.
+        if (apdu.apduCase != Apdu.ApduCase.Three)  {                                                // we want case 3 write with no read
+            ApduException.Throw(Apdu.SW.WRONG_LENGTH);                                              //      Oops. it's not what we prescribed
+        }                                                                                           //
+
+        if ((apdu.P1 != 0) || (apdu.P2 != 0)) {                                                     // P1 & P2 must be zero
+            ApduException.Throw(Apdu.SW.INCORRECT_P1P2);                                            //      Oops. it's not
+        }                                                                                           //
+
         int iIpeNo   = shell.getE();                                                                // IPE # E+1 is reserved for the Directory
         int iDataLen = apdu.Lc;                                                                     // Payload size
         if (iDataLen != iPASSWORD_SIZE + directory.getLength()) {                                   // length should be pwd::logRecord[30]
@@ -1094,6 +1127,10 @@ public class Cmd11 extends VCard {
         // ToDo: test for case 4
 
         sfAuthenticated = sbool.False;                                                              // Always terminate the SM now this has been called.
+
+        if ((apdu.apduCase != Apdu.ApduCase.Four) || (apdu.Lc != iCSS_SIZE)) {                      // we want case 4 && Check Len = sig size.
+            ApduException.Throw(Apdu.SW.WRONG_LENGTH);                                              //
+        }                                                                                           //
 
         if ((apdu.P1 != 0) || (apdu.P2 != 0)) {                                                     //  P1 & P2 should = 0
             ApduException.Throw(Apdu.SW.INCORRECT_P1P2);                                            //
