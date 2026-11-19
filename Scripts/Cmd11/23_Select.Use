@@ -1,0 +1,339 @@
+// !TestName: Select
+//
+//  Tests what Select (00 A4 04 00 Lc AID 00) does to the card's state.
+//
+//  Most of selection is outside the application's control: the phone's
+//  NFC stack decides which service a Select reaches, and only an exact
+//  Select-by-AID (CLA 00, P1 04, P2 00) for our AID gets to it. So this
+//  test does not try other AIDs, P1/P2 or CLA values.
+//
+//  What the application does control is that a Select is the logical
+//  equivalent of a reset: the card image is reloaded from what was last
+//  committed and every session variable is cleared. So a Select, even in
+//  the middle of a session and with no reset of the reader:
+//      - ends the session: updates and End Session are refused (6982);
+//      - discards every uncommitted update (IPE and directory here);
+//      - forgets any authentication progress, pseudo or full: the next
+//        authentication starts from the beginning;
+//      - issues a new challenge;
+//  and keeps everything that was committed.
+//
+//  Every Select under test is sent with no reset of Reader A before it, so
+//  any reset behaviour comes from the Select alone. (Authenticate.Inc,
+//  used to open sessions, does cold reset first; that is not under test.)
+//
+//  Setup: Find an empty directory entry (IpeNo). CREATE_IPE + WDIR, add an
+//     entry for it, write a base IPE (mark 00) and commit.
+//  A: Two Selects in a row: the same FCI apart from a new challenge.
+//  B: Select in the middle of a session with an IPE update and a
+//     directory update in it:
+//       the FCI shows the committed directory, not the updated one;
+//       the IPE reads back as committed (seal redacted: not authenticated);
+//       Update Ipe and the correct End Session for the old session: 6982;
+//       authenticating against the new FCI works and finds the committed
+//       data.
+//  C: Select part way through authentication:
+//       after a failed Media Authenticate: Select, then authenticate;
+//       pseudo UID card, after the pseudo step: Select gives the random
+//       UID FCI again, and the pseudo step must be done again.
+//  D: Select after a commit: the committed IPE and the new CSS are there.
+//  E: Write the original directory back and commit.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//                  Card to have at least one empty IPE entry in the directory.
+//                  The last empty one is used.
+//
+//  If the test stops part way, the directory may be left with the extra
+//  entry. The original is printed at the start (OrigDir).
+//
+
+// ---- Status words ---------------------------------------------------
+var SW_OK     = 9000;
+var SW_SEC    = 6982;
+var SW_NOREC  = 6A83;
+
+// ---- Variables used by Authenticate.Inc, Commit.Inc & SessionSig.Inc ---
+var CardAid    = @Itso.Aid;
+var CardSelect = 00A40400 CardAid.Length CardAid;
+var HashAcc;
+var Hash;
+var Sig;
+var CmProof;
+var IsamProof;
+var RaResp;
+var RaFci;
+var Ra6F;
+var RaA5;
+var RaShell;
+var RaDir;
+var RaChal;
+var RaPUid;
+var RaSUid;
+var RaKas;
+var RaBody;
+var RaIsam;
+var RaMedia;
+
+var Tx;
+var Rx;
+
+// ---- Variables used by FciParse.Inc & AuthTry.Inc ----------------------
+var RsFci;
+var Rs6F;
+var RsA5;
+var RsShell;
+var RsCap;
+var RsDir;
+var RsOid;
+var RsCss;
+var RsChal;
+var RsPUid;
+var RsSUid;
+var RsKas;
+var Uid;
+var Body;
+var IsamRx;
+var MediaTx;
+var MediaRx;
+
+// ---- The first Select, for comparison --------------------------------
+var S1Shell;
+var S1Cap;
+var S1Dir;
+var S1Oid;
+var S1Css;
+var S1Chal;
+var S1PUid;
+var S1SUid;
+var S1Kas;
+u8  Pseudo   = 0;
+
+// ---- Test IPE construction ---------------------------------------------
+var IpeBody  = 0102030405060708090A0B0C0D0E;                          // 14 bytes
+var SealTail = 5EA15EA15EA15EA15EA15EA15EA1;                         // 14 bytes. Seal = Mark Mark SealTail
+var Redacted = FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
+var Ipe;
+var Committed;                                                        // the IPE last committed
+var Pwd;
+var OldSig;
+var AuthJunk = 00112233445566778899AABBCCDDEEFF;
+u8  Mark     = 0;
+
+// ---- Directory handling -------------------------------------------
+var IpeEntry = 440440A3CA;                                            // type 2 IPE entry, as 06_ReadAndUpdate
+var IsamIpe  = 1801FF1003600065 03E80F9F01F307D0 8F14000200000000 1088080000000000;
+var OrigDir;
+var NewDir;
+var SignedDir;
+var DirPwd;
+var Entry;
+u8  ShellE   = 0;
+u8  IpeNo    = 0;
+u8  Slot     = 0;
+u8  Off      = 0;
+
+
+@PrintLn(" ************ Setup: pick an empty IPE entry ***************************");
+@Include ("Authenticate.Inc");
+OrigDir = RaDir;
+@Debug(OrigDir);
+ShellE  = RaShell[18_d];
+
+for (Slot = 1; Slot < ShellE; Slot++) {                               // IPE entries are 1..E-1
+    Entry = RaDir[(2 + 5*(Slot-1))..(2 + 5*(Slot-1) + 4)];
+    if (Entry == 0000000000) {                                        // all zero = empty (Directory.E_Empty)
+        IpeNo = Slot;
+    }
+}
+@Assert(IpeNo != 0, "The directory needs an empty IPE entry");
+@PrintLn("Using slot #" :: IpeNo);
+Off = 2 + 5*(IpeNo-1);
+
+Tx = IpeEntry IsamIpe;
+Rx = @ReaderB.Apdu("WSAM IPE", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 01 00);  // P1 = IPE# - 1
+@Assert(Rx[¬1..] == SW_OK, "CREATE_IPE");
+Pwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+
+NewDir = OrigDir[0..(Off-1)] IpeEntry OrigDir[(Off+5)..];             // WDIR straight after its CREATE_IPE
+Rx = @ReaderB.Apdu("WSAM Directory", 9040 0002 ((u8)(2 + NewDir.length)) ((u16)NewDir.length) NewDir);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("WDIR", 9056 0000 01 01 00);
+@Assert(Rx[¬1..] == SW_OK, "WDIR");
+DirPwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+SignedDir = Rx[..¬2];
+
+Tx = 901E 0000 ((u8)(DirPwd.length + SignedDir.length)) DirPwd SignedDir;
+Rx = @ReaderA.Apdu("Update Dir", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Update Dir");
+
+Mark = 00;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark 00", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Update Ipe");
+@Include ("Commit.Inc");
+Committed = Ipe;
+
+
+@PrintLn(" ************ A: Two Selects in a row *********************************");
+RsFci = @ReaderA.Apdu("Select 1", CardSelect);
+@Test(RsFci[¬1..] == SW_OK, "Select 1 OK");
+@Include ("FciParse.Inc");
+S1Shell = RsShell;  S1Cap = RsCap;  S1Dir = RsDir;  S1Oid = RsOid;  S1Css = RsCss;
+S1Chal  = RsChal;   S1PUid = RsPUid; S1SUid = RsSUid; S1Kas = RsKas;
+if (S1PUid.Length != 0) { Pseudo = 1;  @PrintLn("Pseudo UID card"); }
+else                    {              @PrintLn("Static UID card"); }
+
+RsFci = @ReaderA.Apdu("Select 2", CardSelect);
+@Test(RsFci[¬1..] == SW_OK, "Select 2 OK");
+@Include ("FciParse.Inc");
+@Test(RsShell == S1Shell, "Select 2: same shell");
+@Test(RsCap   == S1Cap,   "Select 2: same capabilities");
+@Test(RsDir   == S1Dir,   "Select 2: same directory");
+@Test(RsOid   == S1Oid,   "Select 2: same OID list");
+@Test(RsCss   == S1Css,   "Select 2: same CSS");
+@Test(RsPUid  == S1PUid,  "Select 2: same pseudo UID");
+@Test(RsSUid  == S1SUid,  "Select 2: same static UID");
+@Test(RsKas   == S1Kas,   "Select 2: same KAS");
+@Test(RsChal  != S1Chal,  "Select 2: a new challenge");
+
+
+@PrintLn(" ************ B: Select in the middle of a session *********************");
+@Include ("Authenticate.Inc");
+Mark = B1;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark B1 (never committed)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted");
+Tx = 901E 0000 ((u8)(DirPwd.length + OrigDir.length)) DirPwd OrigDir;
+Rx = @ReaderA.Apdu("Update Dir, entry removed (never committed)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Dir accepted");
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe (in session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_NOREC, "In session: the uncommitted directory is in use");
+@Include ("SessionSig.Inc");                                          // the correct End Session signature, held back
+OldSig = Sig;
+
+@PrintLn("============ Select, no reset");
+RsFci = @ReaderA.Apdu("Select (mid session)", CardSelect);
+@Test(RsFci[¬1..] == SW_OK, "Select mid session OK");
+@Include ("FciParse.Inc");
+if (Pseudo == 1) {
+    @Test(RsPUid == S1PUid, "Back to the random UID FCI: the pseudo step is forgotten too");
+}
+else {
+    @Test(RsDir == SignedDir, "The FCI shows the committed directory, not the updated one");
+}
+@Test(RsChal != RaChal, "A new challenge");
+
+Rx = @ReaderA.Apdu("Read Ipe (after Select)", 9012 IpeNo 00 00);
+@Test(Rx[¬1..] == SW_OK, "The committed directory entry is back");
+@Test(Rx[5..¬2] == Committed[..¬16_d] Redacted, "The committed IPE is back, seal redacted: not authenticated");
+
+Tx = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx = @ReaderA.Apdu("Update Ipe (after Select)", Tx);
+@Test(Rx[¬1..] == SW_SEC, "The session is over: Update Ipe refused");
+Rx = @ReaderA.Apdu("End Session (old session's signature)", 9020 0000 08 OldSig 00);
+@Test(Rx[¬1..] == SW_SEC, "The old session can't be committed after a Select");
+
+@PrintLn("============ A new session from the Select's FCI, no reset");
+@Include ("AuthTry.Inc");
+@Test(MediaRx[¬1..] == SW_OK, "Authenticate against the new challenge accepted");
+Rx = @ReaderB.Apdu("Isam External Authenticate", 00 82 00 RsKas[1] (MediaRx.Length-2) MediaRx[..¬2]);
+@Test(Rx[¬1..] == SW_OK, "ISAM accepts the card's response");
+if (Pseudo == 1) {
+    RsFci = @ReaderA.Apdu("Reselect", 9022 0000 00);
+    @Assert(RsFci[¬1..] == SW_OK, "Reselect OK?");
+    @Include ("FciParse.Inc");
+    @Test(RsDir == SignedDir, "The static FCI shows the committed directory, not the updated one");
+    @Include ("AuthTry.Inc");
+    @Test(MediaRx[¬1..] == SW_OK, "Static step accepted");
+    Rx = @ReaderB.Apdu("Isam External Authenticate", 00 82 00 RsKas[1] (MediaRx.Length-2) MediaRx[..¬2]);
+    @Test(Rx[¬1..] == SW_OK, "ISAM accepts the card's response");
+}
+HashAcc = @Sha256.init;
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe (new session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == Committed, "New session: the committed IPE, real seal");
+@Include ("Commit.Inc");                                              // the new session commits normally
+
+
+@PrintLn(" ************ C: Select part way through authentication ****************");
+@PrintLn("============ C1: after a failed Media Authenticate");
+RsFci = @ReaderA.Apdu("Select", CardSelect);
+@Assert(RsFci[¬1..] == SW_OK, "Select OK?");
+Rx = @ReaderA.Apdu("Media Authenticate (garbage)", 9010 0000 10 AuthJunk 08);
+@Test(Rx[¬1..] == SW_SEC, "Garbage Authenticate refused");
+RsFci = @ReaderA.Apdu("Select (after the failure)", CardSelect);
+@Test(RsFci[¬1..] == SW_OK, "Select OK");
+@Include ("FciParse.Inc");
+@Include ("AuthTry.Inc");
+@Test(MediaRx[¬1..] == SW_OK, "After a Select, authentication starts afresh and succeeds");
+Rx = @ReaderB.Apdu("Isam External Authenticate", 00 82 00 RsKas[1] (MediaRx.Length-2) MediaRx[..¬2]);
+@Test(Rx[¬1..] == SW_OK, "ISAM accepts the card's response");
+
+if (Pseudo == 1) {
+    @PrintLn("============ C2: pseudo UID card, after the pseudo step");
+    //  The card is pseudo authenticated now (C1 did the pseudo step).
+    RsFci = @ReaderA.Apdu("Select (pseudo authenticated)", CardSelect);
+    @Test(RsFci[¬1..] == SW_OK, "Select OK");
+    @Include ("FciParse.Inc");
+    @Test(RsPUid == S1PUid,    "Select gives the random UID FCI again");
+    @Test(RsSUid.Length == 0,  "No static UID: the pseudo step is forgotten");
+    @Test(RsDir.Length  == 0,  "No directory: the pseudo step is forgotten");
+    @Include ("AuthTry.Inc");                                         // RsPUid is set: the pseudo step again
+    @Test(MediaRx[¬1..] == SW_OK, "The pseudo step must be (and can be) done again");
+    Rx = @ReaderB.Apdu("Isam External Authenticate (pseudo)", 00 82 00 RsKas[1] (MediaRx.Length-2) MediaRx[..¬2]);
+    @Test(Rx[¬1..] == SW_OK, "ISAM accepts the card's pseudo response");
+}
+
+@PrintLn("============ C3: fully authenticated, then Select");
+@Include ("Authenticate.Inc");
+RsFci = @ReaderA.Apdu("Select (fully authenticated)", CardSelect);
+@Test(RsFci[¬1..] == SW_OK, "Select OK");
+Tx = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx = @ReaderA.Apdu("Update Ipe (after Select)", Tx);
+@Test(Rx[¬1..] == SW_SEC, "Full authentication forgotten: Update Ipe refused");
+Rx = @ReaderA.Apdu("Read Ipe (after Select)", 9012 IpeNo 00 00);
+@Test(Rx[¬17_d..¬2] == Redacted, "Full authentication forgotten: the seal is redacted again");
+
+
+@PrintLn(" ************ D: Select after a commit *********************************");
+@Include ("Authenticate.Inc");
+Mark = D1;
+Ipe  = 10 Mark IpeBody Mark Mark SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe, mark D1", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update Ipe accepted");
+@Include ("Commit.Inc");
+Committed = Ipe;
+
+RsFci = @ReaderA.Apdu("Select (after commit)", CardSelect);
+@Test(RsFci[¬1..] == SW_OK, "Select OK");
+@Include ("FciParse.Inc");
+@Test(RsCss == CmProof, "The FCI carries the CSS of the last commit");
+Rx = @ReaderA.Apdu("Read Ipe (after Select)", 9012 IpeNo 00 00);
+@Test(Rx[5..¬2] == Committed[..¬16_d] Redacted, "The committed IPE survives the Select");
+
+
+@PrintLn(" ************ E: Restore the original directory ***********************");
+@Print("Original : " :: OrigDir);
+@Include ("Authenticate.Inc");
+Tx = 901E 0000 ((u8)(DirPwd.length + OrigDir.length)) DirPwd OrigDir;
+Rx = @ReaderA.Apdu("Update Dir (restore)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Restore directory accepted");
+@Include ("Commit.Inc");
+
+@Include ("Authenticate.Inc");
+@Test(RaDir == OrigDir, "Original directory restored");
