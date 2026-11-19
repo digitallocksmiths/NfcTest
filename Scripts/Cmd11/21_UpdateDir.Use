@@ -1,0 +1,275 @@
+// !TestName: UpdateDir
+//
+//  Tests what Update Dir (901E 0000 Lc pwd[8] directory) rejects, and that
+//  a rejected update changes nothing and leaves the session running.
+//  (ISO case checks are in 07_CommandStructure; repeated overwrites, every
+//  illegal Lc and commit/discard are in 11_DirUpdateCommit.)
+//
+//      P1 = P2 = 00, otherwise 6A86.
+//      The password must be the directory's own (slot E+1), otherwise 6300.
+//
+//  Which directory the card is using is checked with DirProbe.Inc (Read
+//  IPE of slot IpeNo: 6A83 while its entry is empty, 9000 and the entry
+//  once it is there).
+//
+//  Setup: Find an empty directory entry (IpeNo). CREATE_IPE on it, then
+//     WDIR (a directory with an entry for it: SignedDir, and the directory
+//     password), then CREATE_IPE on slot E for the log password. Read the
+//     log and every other IPE and VRG (Snapshot).
+//  A: In one session, all with an otherwise good update (SignedDir):
+//       A1: Every P1 from 01 to FF: 6A86. Every P2 from 01 to FF: 6A86.
+//       A2: Wrong password (all FF; last byte changed; the IPE slot's
+//           password; the log's password): 6300.
+//       After each group the card still uses the original directory.
+//       A3: A good update is then accepted and in use at once. The log and
+//       every other IPE and VRG are unchanged. Commit: the session survived
+//       every rejection (all exchanges are in the hash).
+//  B: After commit and reset: SignedDir is in the FCI; the log and every
+//     other IPE and VRG are as at the start.
+//  C: Write the original directory back and commit.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//                  Card to have at least one empty IPE entry in the directory.
+//                  The last empty one is used.
+//
+//  If the test stops part way, the directory may be left with the extra
+//  entry. The original is printed at the start (OrigDir).
+//
+
+// ---- Status words ---------------------------------------------------
+var SW_OK     = 9000;
+var SW_AUTH   = 6300;
+var SW_P1P2   = 6A86;
+var SW_NOREC  = 6A83;
+
+// ---- Variables used by Authenticate.Inc & Commit.Inc -------------------
+var CardAid    = @Itso.Aid;
+var CardSelect = 00A40400 CardAid.Length CardAid;
+var HashAcc;
+var Hash;
+var Sig;
+var CmProof;
+var IsamProof;
+var RaResp;
+var RaFci;
+var Ra6F;
+var RaA5;
+var RaShell;
+var RaDir;
+var RaChal;
+var RaPUid;
+var RaSUid;
+var RaKas;
+var RaBody;
+var RaIsam;
+var RaMedia;
+
+var Tx;
+var Rx;
+
+// ---- Variables used by DirProbe.Inc ------------------------------------
+var ExpDir;
+var Entry;
+u8  IpeNo    = 0;
+u8  Off      = 0;
+u8  Step     = 0;
+
+// ---- Passwords ----------------------------------------------------------
+var DirPwd;
+var BadPwd   = FFFFFFFFFFFFFFFF;
+var NearPwd;                                                          // DirPwd with its last byte changed
+var IpePwd;                                                           // slot IpeNo's password
+var LogPwd;                                                           // the log's password
+
+// ---- Directories and data ------------------------------------------------
+var IpeEntry    = 440440A3CA;                                         // type 2 IPE entry, as 06_ReadAndUpdate
+var IsamIpe     = 1801FF1003600065 03E80F9F01F307D0 8F14000200000000 1088080000000000;
+var LogE_Orphan = 7F80000000;
+var IsamLog     = 1C0400FCC7A29E80009B0000CA000D5222000001CA000D522200000000FF000000000000;
+var SealTail    = 5EA15EA15EA15EA15EA15EA15EA1;                      // 14 bytes
+var SlotIpe     = 10 D1 0102030405060708090A0B0C0D0E D1 10 SealTail;  // size 10: a known IPE in slot IpeNo
+var OrigDir;
+var NewDir;
+var SignedDir;
+var Snapshot;
+var Snap2;
+u8  DirLc    = 0;
+u8  ShellE   = 0;
+u8  Slot     = 0;
+u8  k        = 0;
+u8  P        = 0;
+
+
+@PrintLn(" ************ Setup: passwords and the card as found *******************");
+@Include ("Authenticate.Inc");
+OrigDir = RaDir;
+@Debug(OrigDir);
+ShellE  = RaShell[18_d];
+
+for (Slot = 1; Slot < ShellE; Slot++) {                               // IPE entries are 1..E-1
+    Entry = RaDir[(2 + 5*(Slot-1))..(2 + 5*(Slot-1) + 4)];
+    if (Entry == 0000000000) {                                        // all zero = empty (Directory.E_Empty)
+        IpeNo = Slot;
+    }
+}
+@Assert(IpeNo != 0, "The directory needs an empty IPE entry");
+@PrintLn("Using slot #" :: IpeNo);
+Off = 2 + 5*(IpeNo-1);
+
+Tx = IpeEntry IsamIpe;
+Rx = @ReaderB.Apdu("WSAM IPE", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 01 00);  // P1 = IPE# - 1
+@Assert(Rx[¬1..] == SW_OK, "CREATE_IPE");
+IpePwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+
+NewDir = OrigDir[0..(Off-1)] IpeEntry OrigDir[(Off+5)..];             // WDIR straight after its CREATE_IPE
+Rx = @ReaderB.Apdu("WSAM Directory", 9040 0002 ((u8)(2 + NewDir.length)) ((u16)NewDir.length) NewDir);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("WDIR", 9056 0000 01 01 00);
+@Assert(Rx[¬1..] == SW_OK, "WDIR");
+DirPwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+SignedDir = Rx[..¬2];
+DirLc     = DirPwd.Length + SignedDir.Length;
+NearPwd   = DirPwd[0..6] DirPwd[0];                                   // last byte replaced
+if (NearPwd == DirPwd) { NearPwd = DirPwd[0..6] DirPwd[1]; }
+
+Tx = LogE_Orphan IsamLog;                                             // only the password is wanted
+Rx = @ReaderB.Apdu("WSAM LOG", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("CREATE_IPE (log)", 9052 ((u8)(ShellE-1)) 00 01 01 00);
+@Assert(Rx[¬1..] == SW_OK, "CREATE_IPE");
+LogPwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+
+Snapshot = 00;
+Tx = 9016 0500 00;
+Rx = @ReaderA.Apdu("Read 5 Log (snapshot)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+Snapshot = Snapshot Rx;
+for (Slot = 1; Slot < ShellE; Slot++) {
+    if (Slot != IpeNo) {
+        Tx = 9012 Slot 00 00;
+        Rx = @ReaderA.Apdu("Read Ipe #" :: Slot :: " (snapshot)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        Snapshot = Snapshot Slot Rx;
+        Tx = 9014 Slot 00 00;
+        Rx = @ReaderA.Apdu("Read Vrg #" :: Slot :: " (snapshot)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        Snapshot = Snapshot Slot Rx;
+    }
+}
+
+@PrintLn("============ A known IPE in slot #" :: IpeNo :: ", read once its entry is in");
+Tx = 9018 IpeNo 00 ((u8)(IpePwd.Length + SlotIpe.Length)) IpePwd SlotIpe;
+Rx = @ReaderA.Apdu("Update Ipe (slot)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Update Ipe");
+@Include ("Commit.Inc");
+
+
+@PrintLn(" ************ A: Rejections, in one session ****************************");
+@Include ("Authenticate.Inc");
+ExpDir = OrigDir;
+@Include ("DirProbe.Inc");                                            // slot empty to start with
+
+@PrintLn("============ A1: Illegal P1 (01..FF) and P2 (01..FF)");
+for (k = 0; k < FF; k++) {                                            // Counting k, so the u8 never wraps
+    P  = 1 + k;
+    Tx = 901E P 00 DirLc DirPwd SignedDir;
+    Rx = @ReaderA.Apdu("Update Dir P1 " :: P, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_P1P2, "P1 " :: P :: " rejected");
+}
+for (k = 0; k < FF; k++) {
+    P  = 1 + k;
+    Tx = 901E 00 P DirLc DirPwd SignedDir;
+    Rx = @ReaderA.Apdu("Update Dir P2 " :: P, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_P1P2, "P2 " :: P :: " rejected");
+}
+Step = 1;
+@Include ("DirProbe.Inc");                                            // still OrigDir
+
+@PrintLn("============ A2: Wrong passwords");
+Tx = 901E 0000 DirLc BadPwd SignedDir;
+Rx = @ReaderA.Apdu("Update Dir, password all FF", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "Password all FF rejected");
+Tx = 901E 0000 DirLc NearPwd SignedDir;
+Rx = @ReaderA.Apdu("Update Dir, password last byte changed", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "Password with only its last byte wrong rejected");
+Tx = 901E 0000 DirLc IpePwd SignedDir;
+Rx = @ReaderA.Apdu("Update Dir, IPE slot's password", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "An IPE slot's password rejected");
+Tx = 901E 0000 DirLc LogPwd SignedDir;
+Rx = @ReaderA.Apdu("Update Dir, the log's password", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_AUTH, "The log's password rejected");
+Step = 2;
+@Include ("DirProbe.Inc");                                            // still OrigDir
+
+@PrintLn("============ A3: A good update after all that");
+Tx = 901E 0000 DirLc DirPwd SignedDir;
+Rx = @ReaderA.Apdu("Update Dir (good)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Good Update Dir accepted");
+ExpDir = SignedDir;
+Step   = 3;
+@Include ("DirProbe.Inc");
+@Test(Rx[5..¬2] == SlotIpe, "The new entry is in use at once: slot #" :: IpeNo :: "'s IPE reads");
+
+Snap2 = 00;
+Tx = 9016 0500 00;
+Rx = @ReaderA.Apdu("Read 5 Log", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+Snap2 = Snap2 Rx;
+for (Slot = 1; Slot < ShellE; Slot++) {
+    if (Slot != IpeNo) {
+        Tx = 9012 Slot 00 00;
+        Rx = @ReaderA.Apdu("Read Ipe #" :: Slot, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        Snap2 = Snap2 Slot Rx;
+        Tx = 9014 Slot 00 00;
+        Rx = @ReaderA.Apdu("Read Vrg #" :: Slot, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        Snap2 = Snap2 Slot Rx;
+    }
+}
+@Test(Snap2 == Snapshot, "The log and every other IPE and VRG are untouched");
+
+@Include ("Commit.Inc");                                              // every rejected exchange is in the hash
+
+
+@PrintLn(" ************ B: After commit ******************************************");
+@Include ("Authenticate.Inc");
+@Test(RaDir == SignedDir, "Committed: the new directory is in the FCI");
+Step = 4;
+@Include ("DirProbe.Inc");
+Snap2 = 00;
+Tx = 9016 0500 00;
+Rx = @ReaderA.Apdu("Read 5 Log", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+Snap2 = Snap2 Rx;
+for (Slot = 1; Slot < ShellE; Slot++) {
+    if (Slot != IpeNo) {
+        Tx = 9012 Slot 00 00;
+        Rx = @ReaderA.Apdu("Read Ipe #" :: Slot, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        Snap2 = Snap2 Slot Rx;
+        Tx = 9014 Slot 00 00;
+        Rx = @ReaderA.Apdu("Read Vrg #" :: Slot, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        Snap2 = Snap2 Slot Rx;
+    }
+}
+@Test(Snap2 == Snapshot, "Committed: the log and every other IPE and VRG as at the start");
+
+
+@PrintLn(" ************ C: Restore the original directory ***********************");
+@Print("Original : " :: OrigDir);
+Tx = 901E 0000 ((u8)(DirPwd.length + OrigDir.length)) DirPwd OrigDir;
+Rx = @ReaderA.Apdu("Update Dir (restore)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Restore directory accepted");
+@Include ("Commit.Inc");
+
+@Include ("Authenticate.Inc");
+@Test(RaDir == OrigDir, "Original directory restored");
+ExpDir = OrigDir;
+Step   = 5;
+@Include ("DirProbe.Inc");
