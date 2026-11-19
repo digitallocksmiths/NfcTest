@@ -56,7 +56,7 @@ public class Apdu {
             else if (baApdu.length == (5 + iLen + 1)) {                                         //
                 apduCase = ApduCase.Four;                                                       //      4: Short form
                 Lc = iLen;                                                                      //          RX = volume delivered
-                Le = baApdu[baApdu.length - 1];                                                 //          TX = 1..256 bytes expected
+                Le = baApdu[baApdu.length - 1] & 0xFF;                                          //          TX = 1..256 bytes expected
                 if (Le == 0) {
                     Le = 256;
                     fAsMuchAsWeHave = true;

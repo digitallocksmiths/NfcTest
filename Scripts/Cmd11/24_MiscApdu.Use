@@ -1,0 +1,251 @@
+// !TestName: MiscApdu
+//
+//  Miscellaneous APDU handling not covered by the per-command tests:
+//
+//  A: Commands with no Select. When the field drops the card image is
+//     discarded, so until the next Select every command, CMD11 or not,
+//     gives 6E00. A session that was open is gone with it: its correct
+//     End Session also gives 6E00, and after Select its update is not
+//     there.
+//  B: Unknown commands, not authenticated:
+//       every CLA but 90 and FF (with an otherwise good Read IPE): 6E00
+//       (CLA FF is left out: PC/SC readers use it for their own commands);
+//       every INS that is not a CMD11 command (CLA 90): 6D00;
+//       malformed APDUs (3 bytes; 6 bytes; Lc not matching the data): 6F00.
+//  C: The same in a session: the same status words, the session carries
+//     on, and every one of those exchanges is in the session hash (the
+//     commit at the end only succeeds if the card hashed them too).
+//  D: Extended length APDUs (Lc/Le in 2 or 3 bytes). No CMD11 command
+//     takes one, so each is rejected with 6700:
+//       not authenticated: Read IPE, Read VRG, Read Log, Reselect,
+//       Authenticate (updates give 6982 first, as without a session);
+//       in a session: Update IPE (including a size over E4, which only
+//       an extended APDU can carry), Update VRG, Update Log, Update Dir;
+//       the session carries on and commits;
+//       End Session: rejected, and like any End Session it ends the
+//       session.
+//
+//  Nothing is committed to the card: the sessions in C and D commit no
+//  updates.
+//
+//  Prerequisite:   Card on Reader A, with an IPE in slot 1 (as left by
+//                  03_CreateIpeSuccess) for the Read IPE checks.
+//                  ISAM in Reader B.
+//                  Reader A must pass extended length APDUs (section D)
+//                  and short ones of 3 bytes (sections B, C).
+//
+
+// ---- Status words ---------------------------------------------------
+var SW_OK      = 9000;
+var SW_SEC     = 6982;
+var SW_LEN     = 6700;
+var SW_INS     = 6D00;
+var SW_CLA     = 6E00;
+var SW_UNKNOWN = 6F00;
+
+// ---- Variables used by Authenticate.Inc, Commit.Inc & SessionSig.Inc ---
+var CardAid    = @Itso.Aid;
+var CardSelect = 00A40400 CardAid.Length CardAid;
+var HashAcc;
+var Hash;
+var Sig;
+var CmProof;
+var IsamProof;
+var RaResp;
+var RaFci;
+var Ra6F;
+var RaA5;
+var RaShell;
+var RaDir;
+var RaChal;
+var RaPUid;
+var RaSUid;
+var RaKas;
+var RaBody;
+var RaIsam;
+var RaMedia;
+
+var Tx;
+var Rx;
+
+// ---- Test data -----------------------------------------------------------
+var BadPwd   = FFFFFFFFFFFFFFFF;
+var AuthJunk = 00112233445566778899AABBCCDDEEFF;
+var Z16      = 00000000000000000000000000000000;
+var SmallIpe = 04 000000 Z16;                                         // size 4 + seal: 20 bytes
+var BigIpe;                                                           // size byte EC (236): too big for a short APDU
+var Rec30;                                                            // a 30 byte log record
+var Before;                                                           // Read IPE #1 before section A's session
+var DirLen;
+u8  k        = 0;
+u8  C        = 0;
+u8  I        = 0;
+u8  Known    = 0;
+
+BigIpe = EC;
+for (k = 0; k < F9; k++) {                                            // 1 + 249 ... + 16 below = 266 bytes: well over FF
+    BigIpe = BigIpe 00;
+}
+BigIpe = BigIpe Z16;
+Rec30 = Z16 Z16 Z16;
+
+
+@PrintLn(" ************ A: Commands with no Select *******************************");
+@Include ("Authenticate.Inc");
+DirLen = RaDir.Length;
+Tx = 9012 0100 00;
+Rx = @ReaderA.Apdu("Read Ipe #1 (before)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Slot 1 must hold an IPE (run 03_CreateIpeSuccess first)");
+Before = Rx;
+
+@PrintLn("============ A session with an update, then the field drops");
+Tx = 901C 0000 38 BadPwd Rec30;                                       // well formed, wrong password: no update made,
+Rx = @ReaderA.Apdu("Update Log (wrong password)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Include ("SessionSig.Inc");                                          //   but a session worth a signature
+
+@ReaderA.Reset.cold;                                                  // field off: the image is discarded
+
+Rx = @ReaderA.Apdu("End Session (no Select)", 9020 0000 08 Sig 00);
+@Test(Rx[¬1..] == SW_CLA, "No Select: the old session's End Session gives 6E00");
+Rx = @ReaderA.Apdu("Read Ipe #1 (no Select)", 9012 0100 00);
+@Test(Rx[¬1..] == SW_CLA, "No Select: Read IPE gives 6E00");
+Rx = @ReaderA.Apdu("Read Vrg #1 (no Select)", 9014 0100 00);
+@Test(Rx[¬1..] == SW_CLA, "No Select: Read VRG gives 6E00");
+Rx = @ReaderA.Apdu("Read Log (no Select)", 9016 0100 00);
+@Test(Rx[¬1..] == SW_CLA, "No Select: Read Log gives 6E00");
+Rx = @ReaderA.Apdu("Reselect (no Select)", 9022 0000 00);
+@Test(Rx[¬1..] == SW_CLA, "No Select: Reselect gives 6E00");
+Rx = @ReaderA.Apdu("Authenticate (no Select)", 9010 0000 10 AuthJunk 08);
+@Test(Rx[¬1..] == SW_CLA, "No Select: Authenticate gives 6E00");
+Rx = @ReaderA.Apdu("Update Ipe (no Select)", 9018 0100 1C BadPwd SmallIpe);
+@Test(Rx[¬1..] == SW_CLA, "No Select: Update IPE gives 6E00");
+Rx = @ReaderA.Apdu("Read Binary (no Select)", 00B0 0000 00);
+@Test(Rx[¬1..] == SW_CLA, "No Select: a non CMD11 command gives 6E00");
+
+Rx = @ReaderA.Apdu("Media Select", CardSelect);
+@Test(Rx[¬1..] == SW_OK, "Select works after commands without one");
+Rx = @ReaderA.Apdu("Read Ipe #1 (after Select)", 9012 0100 00);
+@Test(Rx[..¬18_d] == Before[..¬18_d], "After Select: slot 1 reads as before (entry and body)");
+
+
+@PrintLn(" ************ B: Unknown commands, not authenticated *******************");
+@PrintLn("============ Every CLA but 90 (and FF: PC/SC readers keep CLA FF for themselves)");
+for (k = 0; k < FF; k++) {                                            // CLA 00..FE. Counting k, so the u8 never wraps
+    C = k;
+    if (C != 90) {
+        Rx = @ReaderA.Apdu("CLA " :: C, C 12 0100 00);
+        @Test(Rx[¬1..] == SW_CLA, "CLA " :: C :: " rejected");
+    }
+}
+
+@PrintLn("============ Every INS that is not a CMD11 command");
+for (k = 0; k < FF; k++) {                                            // INS 00..FE, then FF
+    I = k;
+    Known = 0;
+    if (I == 10) { Known = 1; }  if (I == 12) { Known = 1; }  if (I == 14) { Known = 1; }
+    if (I == 16) { Known = 1; }  if (I == 18) { Known = 1; }  if (I == 1A) { Known = 1; }
+    if (I == 1C) { Known = 1; }  if (I == 1E) { Known = 1; }  if (I == 20) { Known = 1; }
+    if (I == 22) { Known = 1; }
+    if (Known == 0) {
+        Rx = @ReaderA.Apdu("INS " :: I, 90 I 0000 00);
+        @Test(Rx[¬1..] == SW_INS, "INS " :: I :: " rejected");
+    }
+}
+Rx = @ReaderA.Apdu("INS FF", 90FF 0000 00);
+@Test(Rx[¬1..] == SW_INS, "INS FF rejected");
+
+@PrintLn("============ Malformed");
+Rx = @ReaderA.Apdu("3 bytes", 901201);
+@Test(Rx[¬1..] == SW_UNKNOWN, "A 3 byte APDU is malformed");
+Rx = @ReaderA.Apdu("6 bytes, Lc 00", 9012 0100 00 00);
+@Test(Rx[¬1..] == SW_UNKNOWN, "A 6 byte APDU with byte 5 = 00 is malformed");
+Rx = @ReaderA.Apdu("Lc 02, 3 bytes of data", 9012 0100 02 000000);
+@Test(Rx[¬1..] == SW_UNKNOWN, "Lc not matching the data is malformed");
+
+
+@PrintLn(" ************ C: Unknown commands in a session **************************");
+@Include ("Authenticate.Inc");
+for (k = 0; k < FF; k++) {
+    C = k;
+    if (C != 90) {
+        Tx = C 12 0100 00;
+        Rx = @ReaderA.Apdu("CLA " :: C :: " (in session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        @Test(Rx[¬1..] == SW_CLA, "In session: CLA " :: C :: " rejected");
+    }
+}
+for (k = 0; k < FF; k++) {
+    I = k;
+    Known = 0;
+    if (I == 10) { Known = 1; }  if (I == 12) { Known = 1; }  if (I == 14) { Known = 1; }
+    if (I == 16) { Known = 1; }  if (I == 18) { Known = 1; }  if (I == 1A) { Known = 1; }
+    if (I == 1C) { Known = 1; }  if (I == 1E) { Known = 1; }  if (I == 20) { Known = 1; }
+    if (I == 22) { Known = 1; }
+    if (Known == 0) {
+        Tx = 90 I 0000 00;
+        Rx = @ReaderA.Apdu("INS " :: I :: " (in session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+        @Test(Rx[¬1..] == SW_INS, "In session: INS " :: I :: " rejected");
+    }
+}
+Tx = 901201;
+Rx = @ReaderA.Apdu("3 bytes (in session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_UNKNOWN, "In session: a 3 byte APDU is malformed");
+Tx = 9012 0100 02 000000;
+Rx = @ReaderA.Apdu("Lc mismatch (in session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_UNKNOWN, "In session: Lc not matching the data is malformed");
+
+Tx = 9012 0100 00;
+Rx = @ReaderA.Apdu("Read Ipe #1 (still authenticated?)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx == Before, "Still authenticated: slot 1 reads with its real seal, as at the start");
+@Include ("Commit.Inc");                                              // all the rejected exchanges are in the hash
+
+
+@PrintLn(" ************ D: Extended length APDUs *********************************");
+@PrintLn("============ Not authenticated");
+RaFci = @ReaderA.Apdu("Media Select", CardSelect);
+@Assert(RaFci[¬1..] == SW_OK, "Select OK?");
+Rx = @ReaderA.Apdu("Read Ipe (2E, Le 0000)", 9012 0100 00 0000);
+@Test(Rx[¬1..] == SW_LEN, "Read IPE, extended Le 0000, rejected");
+Rx = @ReaderA.Apdu("Read Ipe (2E, Le 0100)", 9012 0100 00 0100);
+@Test(Rx[¬1..] == SW_LEN, "Read IPE, extended Le 0100, rejected");
+Rx = @ReaderA.Apdu("Read Vrg (2E)", 9014 0100 00 0000);
+@Test(Rx[¬1..] == SW_LEN, "Read VRG, extended, rejected");
+Rx = @ReaderA.Apdu("Read Log (2E)", 9016 0500 00 0000);
+@Test(Rx[¬1..] == SW_LEN, "Read Log, extended, rejected");
+Rx = @ReaderA.Apdu("Reselect (2E)", 9022 0000 00 0000);
+@Test(Rx[¬1..] == SW_LEN, "Reselect, extended, rejected");
+Rx = @ReaderA.Apdu("Authenticate (4E)", 9010 0000 00 0010 AuthJunk 0008);
+@Test(Rx[¬1..] == SW_LEN, "Authenticate, extended, rejected");
+Rx = @ReaderA.Apdu("Update Ipe (3E, no session)", 9018 0100 00 001C BadPwd SmallIpe);
+@Test(Rx[¬1..] == SW_SEC, "Update IPE, extended, no session: 6982 first");
+Rx = @ReaderA.Apdu("Read Ipe #1 (short)", 9012 0100 00);
+@Test(Rx[¬1..] == SW_OK, "The same Read IPE in short form works");
+
+@PrintLn("============ In a session");
+@Include ("Authenticate.Inc");
+Tx = 9018 0100 00 001C BadPwd SmallIpe;
+Rx = @ReaderA.Apdu("Update Ipe (3E)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN, "Update IPE, extended, rejected");
+Tx = 9018 0100 00 ((u16)(BadPwd.Length + BigIpe.Length)) BadPwd BigIpe;
+Rx = @ReaderA.Apdu("Update Ipe (3E, size EC)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN, "Update IPE, size EC (only possible extended), rejected");
+Tx = 901A 0100 00 001C BadPwd SmallIpe;
+Rx = @ReaderA.Apdu("Update Vrg (3E)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN, "Update VRG, extended, rejected");
+Tx = 901C 0000 00 0038 BadPwd Rec30;
+Rx = @ReaderA.Apdu("Update Log (3E)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN, "Update Log, extended, rejected");
+Tx = 901E 0000 00 ((u16)(8 + DirLen)) BadPwd RaDir;
+Rx = @ReaderA.Apdu("Update Dir (3E)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN, "Update Dir, extended, rejected");
+Tx = 9012 0100 00 0000;
+Rx = @ReaderA.Apdu("Read Ipe (2E, in session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_LEN, "In session: Read IPE, extended, rejected");
+@Include ("Commit.Inc");                                              // the session survived, every exchange hashed
+
+@PrintLn("============ End Session, extended");
+@Include ("Authenticate.Inc");
+@Include ("SessionSig.Inc");
+Rx = @ReaderA.Apdu("End Session (4E)", 9020 0000 00 0008 Sig 0000);
+@Test(Rx[¬1..] == SW_LEN, "End Session, extended, rejected");
+Rx = @ReaderA.Apdu("End Session (short, too late)", 9020 0000 08 Sig 00);
+@Test(Rx[¬1..] == SW_SEC, "The extended End Session ended the session: the correct one is refused");
