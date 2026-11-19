@@ -1148,6 +1148,7 @@ public class Cmd11 extends VCard {
         Sig.init(Cipher.ENCRYPT_MODE, SessionKey, new IvParameterSpec(new byte[8]));                // We do Sig as a DES MAC
         byte[] baSig = Sig.doFinal(baMac);                                                          // Calculate the MAC. it's the last block here
         if (!BytesMatch(apdu.baRxData, 0, baSig, baSig.length - 8, 8)) {                            // Check we agree with the caller.
+            ImageReload();                                                                         //      Drop all changes.
             ApduException.Throw(Apdu.SW.AUTHENTICATION_FAILURE);                                    //      Not happy!
         }                                                                                           //
 

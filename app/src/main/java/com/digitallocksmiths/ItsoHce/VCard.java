@@ -248,8 +248,8 @@ public abstract class VCard {
         if (buffer != null) {
             try {
                 byte[] baShell = DeserializeByteArray(buffer);                                      // We need the Shell to know what version of VCard subclass to build.
-                VCard vc = Construct(baShell);                                                      //      the shell picks the sub-class
-                vc.baShell = baShell;                                                               //      now fill in it's interesting stuff.
+                VCard vc = Construct(baShell);                                                      //      the shell picks the subclass
+                vc.baShell = baShell;                                                               //      now fill in its interesting stuff.
                 vc.baName  = DeserializeByteArray(buffer);                                          //                  Name;
                 vc.baTitle = DeserializeByteArray(buffer);                                          //                  Title;
                 vc.baUID = DeserializeByteArray(buffer);                                            //                  baUID;
@@ -266,6 +266,27 @@ public abstract class VCard {
         }
         return null;
     }
+
+    protected void ImageReload() {
+        int[]      aiAge  = new int[2];
+        ByteBuffer buffer = ImageNewest(nvm, aiAge);                                                // buffer will have has the four byte age extracted already
+        if (buffer != null) {
+            try {
+                baShell = DeserializeByteArray(buffer);                                             //      now fill in its interesting stuff.
+                baName  = DeserializeByteArray(buffer);                                             //                  Name;
+                baTitle = DeserializeByteArray(buffer);                                             //                  Title;
+                baUID   = DeserializeByteArray(buffer);                                             //                  baUID;
+                ImageDeserialize(buffer);                                                           //                  CM image data
+                iAgeA   = aiAge[0];
+                iAgeB   = aiAge[1];
+                iAge    = Math.max(aiAge[0], aiAge[1]);
+            }
+            catch (Exception e) {
+                Log.d(TAG, "ReloadImage: parser failed");                                             // in development, we use 'get' exceptions to recognize faulty images
+            }
+        }
+    }
+
 
     private static ByteBuffer ImageNewest(Nvm cardNvm, int[] aiAge) {                               // the newer of the A/B shadows, positioned after its age
         ByteBuffer bufferA = FileReadEncryptedBuffer(cardNvm, Shadow.A);

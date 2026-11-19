@@ -1,0 +1,268 @@
+// !TestName: IpeUpdateCommit
+//
+//  Tests the data written by Update IPE (9018) and when it is committed.
+//
+//  IPE layout:  [size byte][body .....][seal 16]
+//      size  = top 6 bits of the first byte (byte & FC). It counts the
+//              first byte itself, so the body is size-1 bytes after it.
+//      seal  = always 16 bytes.
+//      Update IPE data = password[8] :: IPE, so Lc = 8 + size + 16.
+//      Feasible sizes are 04..E4 (4..228 decimal): E4 gives Lc = FC, the
+//      largest that fits a short APDU (iIPE_MAXSIZE = 231).
+//
+//  Setup: Find an empty directory entry (IpeNo). CREATE_IPE on it to get its
+//     sector password, and add an entry for it to the directory (WDIR +
+//     Update Dir) so the card will let us read it back.
+//  A: In one session, overwrite IPE #IpeNo again and again: every feasible
+//     size going up, then every size going down. All writes must be accepted.
+//     Commit. Only the last write (and the new directory) may be committed.
+//  B: For every feasible size, one session each: read back what the previous
+//     session committed, write this size, commit. Read back happens after
+//     a cold reset, so it comes from NVM and not from RAM.
+//  C: Updates that are not committed must not be kept, and the previously
+//     committed IPE must be read back in their place:
+//       C1: write, then reset without End Session.
+//       C2: write, then End Session with a bad signature (6300).
+//           Also checks that the old data, not the abandoned update, is read
+//           back before the reset.
+//  D: Write the original directory back (IpeNo empty again) and commit.
+//
+//  Test IPEs use made-up bodies and seals. The card does not check seals,
+//  only the sector password. Each test IPE has a "Mark" byte (A1/D1/B1/C1)
+//  and its size in the seal, so a stale or wrong copy is always detected.
+//
+//  Prerequisite:   Card on Reader A.
+//                  ISAM in Reader B.
+//                  Card to have at least one empty IPE entry in the directory.
+//                  The last empty one is used.
+//
+//  If the test stops part way, the directory may be left with the extra
+//  entry. The original is printed at the start (OrigDir).
+//
+//  Section B makes 57 sessions. To shorten a run, set StepB to 8, 16 or 32.
+//  The largest size, E4, is still tested.
+//
+
+// ---- Status words ---------------------------------------------------
+var SW_OK     = 9000;
+var SW_AUTH   = 6300;
+var SW_NOREC  = 6A83;
+
+// ---- Variables used by Authenticate.Inc & Commit.Inc -------------------
+var CardAid    = @Itso.Aid;
+var CardSelect = 00A40400 CardAid.Length CardAid;
+var HashAcc;
+var Hash;
+var Sig;
+var CmProof;
+var IsamProof;
+var RaResp;
+var RaFci;
+var Ra6F;
+var RaA5;
+var RaShell;
+var RaDir;
+var RaChal;
+var RaPUid;
+var RaSUid;
+var RaKas;
+var RaBody;
+var RaIsam;
+var RaMedia;
+
+var Tx;
+var Rx;
+
+// ---- Test IPE construction -----------------------------------------
+var SealTail = 5EA15EA15EA15EA15EA15EA15EA1;                         // 14 bytes. Seal = Mark Size SealTail
+var Redacted = FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;                      // 16 bytes. Seal as seen before authentication
+var Mark     = A1;
+var Ipe;                                                              // the IPE being written
+var Prev;                                                             // the IPE last committed
+var Pwd;                                                              // sector password for IPE #IpeNo
+u8  Size     = 0;
+u8  StepB    = 4;
+
+var Pattern  = 00;                                                    // 00 01 02 ... FF: body filler
+u8  Pb       = 0;
+for (Pb = 1; Pb < 255_d; Pb++) {
+    Pattern = Pattern Pb;
+}
+Pattern = Pattern FF;
+
+// ---- Directory handling -------------------------------------------
+var IpeEntry = 440440A3CA;                                            // type 2 IPE entry, as 06_ReadAndUpdate
+var IsamIpe  = 1801FF1003600065 03E80F9F01F307D0 8F14000200000000 1088080000000000;
+var OrigDir;                                                          // directory as found, restored in D
+var NewDir;                                                           // directory with IpeNo occupied
+var DirPwd;
+var SignedDir;
+var Entry;
+u8  ShellE   = 0;
+u8  IpeNo    = 0;
+u8  Slot     = 0;
+
+
+@PrintLn(" ************ Setup: pick an empty IPE entry ***************************");
+@Include ("Authenticate.Inc");
+
+OrigDir = RaDir;
+@Debug(OrigDir);
+ShellE  = RaShell[18_d];
+
+for (Slot = 1; Slot < ShellE; Slot++) {                               // IPE entries are 1..E-1
+    Entry = RaDir[(2 + 5*(Slot-1))..(2 + 5*(Slot-1) + 4)];
+    if (Entry == 0000000000) {                                        // all zero = empty (Directory.E_Empty)
+        IpeNo = Slot;
+    }
+}
+@Assert(IpeNo != 0, "The directory needs an empty IPE entry");
+@PrintLn("Using IPE #" :: IpeNo);
+
+@PrintLn("============ CREATE_IPE: get the sector password for IPE #" :: IpeNo);
+Tx = IpeEntry IsamIpe;
+Rx = @ReaderB.Apdu("WSAM IPE", 9040 0002 ((u8)(2 + Tx.length)) ((u16)(Tx.length)) Tx);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("CREATE_IPE", 9052 ((u8)(IpeNo-1)) 00 01 01 00);  // P1 = IPE# - 1
+@Assert(Rx[¬1..] == SW_OK, "CREATE_IPE");
+Pwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+
+@PrintLn("============ WDIR: add an entry for IPE #" :: IpeNo);
+var _D1 = RaDir[0..(2 + 5*(IpeNo-1))-1];                              // -1 'cos it's inclusive
+var _D3 = RaDir[(2 + 5*IpeNo)..];
+NewDir  = _D1 IpeEntry _D3;
+@Debug(NewDir);
+
+Rx = @ReaderB.Apdu("WSAM Directory", 9040 0002 ((u8)(2 + NewDir.length)) ((u16)NewDir.length) NewDir);
+@Assert(Rx[¬1..] == SW_OK, "WSAM");
+Rx = @ReaderB.Apdu("WDIR", 9056 0000 01 01 00);
+@Assert(Rx[¬1..] == SW_OK, "WDIR");
+DirPwd = Rx[2..9];
+Rx = @ReaderB.Apdu("RSAM len", 90420002 02);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+Rx = @ReaderB.Apdu("RSAM body", 90420004 Rx[1]);
+@Assert(Rx[¬1..] == SW_OK, "RSAM");
+SignedDir = Rx[..¬2];
+
+Tx = 901E 0000 ((u8)(DirPwd.length + SignedDir.length)) DirPwd SignedDir;
+Rx = @ReaderA.Apdu("Update Dir", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Assert(Rx[¬1..] == SW_OK, "Update Dir");
+
+
+@PrintLn(" ************ A: Many overwrites in one session ***********************");
+
+@PrintLn("============ Write every size going up");
+Mark = A1;
+for (Size = 4; Size <= 228_d; Size += 4) {
+    Ipe = Size Pattern[0..(Size-2)] Mark Size SealTail;
+    Tx  = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+    Rx  = @ReaderA.Apdu("Update Ipe up, size " :: Size, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_OK, "Overwrite (up) accepted, size " :: Size);
+}
+
+@PrintLn("============ Write every size going down");
+Mark = D1;
+for (Size = 228_d; Size >= 4; Size -= 4) {
+    Ipe = Size Pattern[0..(Size-2)] Mark Size SealTail;
+    Tx  = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+    Rx  = @ReaderA.Apdu("Update Ipe down, size " :: Size, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_OK, "Overwrite (down) accepted, size " :: Size);
+}
+Prev = Ipe;                                                           // last write, size 04, Mark D1
+
+@PrintLn("============ For information: what an in-session read returns");
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe #" :: IpeNo :: " (in session)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Debug(Rx);
+@PrintLn("(new data = card reads its RAM copy, 6A83 = card reads the committed directory)");
+
+@Include ("Commit.Inc");
+
+
+@PrintLn(" ************ B: Each size committed in its own session ***************");
+Mark = B1;
+for (Size = 4; Size <= 228_d; Size += StepB) {
+    @PrintLn("============ Size " :: Size);
+    @Include ("Authenticate.Inc");
+
+    Tx = 9012 IpeNo 00 00;
+    Rx = @ReaderA.Apdu("Read Ipe #" :: IpeNo :: " (last commit)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_OK, "Read Ipe OK");
+    @Test(Rx[5..¬2] == Prev, "The last committed IPE was read back (before writing size " :: Size :: ")");
+
+    Ipe = Size Pattern[0..(Size-2)] Mark Size SealTail;
+    Tx  = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+    Rx  = @ReaderA.Apdu("Update Ipe, size " :: Size, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+    @Test(Rx[¬1..] == SW_OK, "Update accepted, size " :: Size);
+
+    @Include ("Commit.Inc");
+    Prev = Ipe;
+}
+
+
+@PrintLn(" ************ C1: Update without End Session is discarded *************");
+@Include ("Authenticate.Inc");
+
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe #" :: IpeNo :: " (last commit)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == Prev, "The last size committed in B was read back");
+
+Mark = C1;
+Size = 40;
+Ipe  = Size Pattern[0..(Size-2)] Mark Size SealTail;
+Tx   = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx   = @ReaderA.Apdu("Update Ipe (not committed)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update accepted");
+
+@PrintLn("Reset without End Session");
+@Include ("Authenticate.Inc");
+
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe #" :: IpeNo, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == Prev, "Update not committed (no End Session) was discarded: previous IPE read back");
+
+
+@PrintLn(" ************ C2: Update with a failed End Session is discarded *******");
+Tx = 9018 IpeNo 00 ((u8)(Pwd.Length + Ipe.Length)) Pwd Ipe;
+Rx = @ReaderA.Apdu("Update Ipe (not committed)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Update accepted");
+
+Rx = @ReaderA.Apdu("End Session (bad signature)", 9020 0000 08 0000000000000000 00);
+@Test(Rx[¬1..] == SW_AUTH, "End Session with a bad signature rejected");
+ 
+@PrintLn("Session over but no reset yet: the abandoned update must not be visible, the old data must be");
+Rx = @ReaderA.Apdu("Read Ipe #" :: IpeNo :: " (not authenticated)", 9012 IpeNo 00 00);
+@Test(Rx[¬1..] == SW_OK, "Read Ipe OK");
+@Test(Rx[5..¬2] == Prev[..¬16_d] Redacted, "Abandoned update not visible after a failed End Session: previous IPE (redacted seal) read back");
+
+@Include ("Authenticate.Inc");
+
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe #" :: IpeNo, Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[5..¬2] == Prev, "Update discarded after a failed End Session and a reset: previous IPE read back");
+
+
+@PrintLn(" ************ D: Restore the original directory ***********************");
+
+//  No ISAM WDIR here: IpeNo is now occupied, so WDIR would be rejected.
+//  OrigDir is the directory as read from the card (already signed), so it is
+//  written straight back with the directory password from the setup WDIR.
+
+@Print("Original : " :: OrigDir);
+@Print("Current  : " :: SignedDir);
+
+Tx = 901E 0000 ((u8)(DirPwd.length + OrigDir.length)) DirPwd OrigDir;
+Rx = @ReaderA.Apdu("Update Dir (restore)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_OK, "Restore directory accepted");
+
+@Include ("Commit.Inc");
+
+@Include ("Authenticate.Inc");
+@Test(RaDir == OrigDir, "Restored directory committed");
+Tx = 9012 IpeNo 00 00;
+Rx = @ReaderA.Apdu("Read Ipe #" :: IpeNo :: " (empty again)", Tx);  HashAcc = @Sha256.Update(HashAcc, Tx);  HashAcc = @Sha256.Update(HashAcc, Rx);
+@Test(Rx[¬1..] == SW_NOREC, "IPE #" :: IpeNo :: " is empty again");
